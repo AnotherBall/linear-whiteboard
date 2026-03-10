@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Linear Whiteboard</title>
+  <link rel="stylesheet" href="./whiteboard.css">
+</head>
+<body>
+  <header class="toolbar">
+    <div class="toolbar-left">
+      <span id="team-name" class="team-badge">--</span>
+      <span id="view-name" class="view-badge"></span>
+      <div class="cycle-control">
+        <button id="cycle-btn" class="toolbar-btn cycle-btn"></button>
+        <div id="cycle-panel" class="cycle-panel" hidden></div>
+      </div>
+    </div>
+    <div class="toolbar-center">
+      <h1>Linear Whiteboard</h1>
+    </div>
+    <div class="toolbar-right">
+      <div class="zoom-control">
+        <button id="zoom-btn" class="toolbar-btn" title="Adjust size">Aa</button>
+        <div id="zoom-panel" class="zoom-panel" hidden>
+          <div class="zoom-row">
+            <label>Text</label>
+            <input id="zoom-text" type="range" min="50" max="150" value="100" step="10">
+            <span id="zoom-text-val">100%</span>
+          </div>
+          <div class="zoom-row">
+            <label>Card</label>
+            <input id="zoom-card" type="range" min="50" max="150" value="100" step="10">
+            <span id="zoom-card-val">100%</span>
+          </div>
+          <button id="zoom-reset" class="zoom-reset-btn">Reset</button>
+        </div>
+      </div>
+      <button id="refresh-btn" class="toolbar-btn" title="Refresh">↻</button>
+      <button id="settings-btn" class="toolbar-btn" title="Settings">⚙</button>
+      <button id="close-btn" class="toolbar-btn close-btn" title="Close Whiteboard">✕</button>
+    </div>
+  </header>
+
+  <div id="pager" class="pager" hidden>
+    <button id="pager-prev" class="pager-btn" disabled>←</button>
+    <span id="pager-label" class="pager-label"></span>
+    <span id="pager-info" class="pager-info"></span>
+    <button id="pager-next" class="pager-btn">→</button>
+  </div>
+
+  <div id="loading" class="overlay" hidden>
+    <p>Loading...</p>
+  </div>
+
+  <div id="error" class="overlay" hidden>
+    <p id="error-text"></p>
+    <button id="error-settings-btn" class="toolbar-btn">Open Settings</button>
+  </div>
+
+  <div id="empty" class="overlay" hidden>
+    <p>No issues found.</p>
+  </div>
+
+  <div id="board" class="board" hidden></div>
+
+  <script type="module" src="./whiteboard.ts"></script>
+</body>
+</html>
