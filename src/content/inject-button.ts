@@ -47,7 +47,10 @@ function createButton(): HTMLButtonElement {
   btn.addEventListener("mouseleave", () => {
     btn.style.background = "rgba(94, 106, 210, 0.15)";
   });
-  btn.addEventListener("click", toggleWhiteboard);
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    toggleWhiteboard();
+  });
   return btn;
 }
 
@@ -77,17 +80,21 @@ function toggleWhiteboard() {
 
   function closeWhiteboard() {
     iframe.remove();
-    document.removeEventListener("keydown", onKey);
+    document.removeEventListener("keydown", onKey, true);
     window.removeEventListener("message", onMessage);
     // Re-inject button in case Linear's SPA re-rendered the header
     setTimeout(injectButton, 100);
   }
 
-  // Close on Escape key
+  // Close on Escape key (capture phase to prevent Linear's shortcut from firing)
   const onKey = (e: KeyboardEvent) => {
-    if (e.key === "Escape") closeWhiteboard();
+    if (e.key === "Escape") {
+      e.stopPropagation();
+      e.preventDefault();
+      closeWhiteboard();
+    }
   };
-  document.addEventListener("keydown", onKey);
+  document.addEventListener("keydown", onKey, true);
 
   // Close on postMessage from iframe
   const onMessage = (e: MessageEvent) => {
