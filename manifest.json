@@ -1,0 +1,34 @@
+{
+  "manifest_version": 3,
+  "name": "Linear Whiteboard",
+  "version": "0.1.0",
+  "description": "Daily Standup Whiteboard View for Linear",
+  "permissions": ["storage", "activeTab"],
+  "host_permissions": ["https://api.linear.app/*"],
+  "action": {
+    "default_popup": "src/popup/popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://linear.app/*"],
+      "js": ["src/content/inject-button.ts"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["src/whiteboard/whiteboard.html", "assets/*"],
+      "matches": ["https://linear.app/*"]
+    }
+  ]
+}
