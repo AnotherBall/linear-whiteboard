@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" href="./popup.css">
+</head>
+<body>
+  <div class="popup">
+    <h1 class="popup-title">Linear Whiteboard</h1>
+
+    <div id="view-detected" hidden>
+      <p id="view-info" class="view-info"></p>
+      <button id="open-whiteboard" class="btn btn-primary">Open Whiteboard</button>
+    </div>
+
+    <div id="no-view" hidden>
+      <p class="hint">Open a Linear Custom View page first.</p>
+    </div>
+
+    <div id="no-apikey" hidden>
+      <p class="hint">API Key is not configured.</p>
+    </div>
+
+    <hr class="divider">
+    <button id="open-settings" class="btn btn-secondary">Settings</button>
+  </div>
+  <script type="module" src="./popup.ts"></script>
+</body>
+</html>
