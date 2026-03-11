@@ -282,7 +282,7 @@ pagerNextBtn.addEventListener("click", () => {
 function renderCurrentGroup() {
   updatePager();
   const group = currentGroups[currentGroupIndex];
-  const boardData = buildBoardData(currentStates, group.issues);
+  const boardData = buildBoardData(currentStates, group.issues, selectedCycleId);
   renderBoard(boardData);
   showView("board");
 }
@@ -349,8 +349,14 @@ function filterStates(states: WorkflowState[]): WorkflowState[] {
   });
 }
 
+// Check if a sub-issue matches the selected cycle
+function matchesCycle(sub: SubIssue, cycleId: string | null): boolean {
+  if (!cycleId) return true;
+  return sub.cycle?.id === cycleId;
+}
+
 // Transform API data into board matrix
-function buildBoardData(states: WorkflowState[], issues: Issue[]): BoardData {
+function buildBoardData(states: WorkflowState[], issues: Issue[], cycleId: string | null): BoardData {
   const filtered = filterStates(states);
   const columns = filtered.map((s) => ({ id: s.id, name: s.name, type: s.type, color: s.color }));
 
@@ -359,17 +365,21 @@ function buildBoardData(states: WorkflowState[], issues: Issue[]): BoardData {
     for (const col of columns) {
       cells[col.id] = [];
     }
-    // Collect children and grandchildren (sub-issues of sub-issues)
+    // Collect children and grandchildren, filtered by cycle
     for (const child of issue.children.nodes) {
-      const stateId = child.state.id;
-      if (cells[stateId]) {
-        cells[stateId].push(child);
+      if (matchesCycle(child, cycleId)) {
+        const stateId = child.state.id;
+        if (cells[stateId]) {
+          cells[stateId].push(child);
+        }
       }
       if (child.children?.nodes) {
         for (const grandchild of child.children.nodes) {
-          const gcStateId = grandchild.state.id;
-          if (cells[gcStateId]) {
-            cells[gcStateId].push(grandchild);
+          if (matchesCycle(grandchild, cycleId)) {
+            const gcStateId = grandchild.state.id;
+            if (cells[gcStateId]) {
+              cells[gcStateId].push(grandchild);
+            }
           }
         }
       }

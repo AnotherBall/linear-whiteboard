@@ -49,6 +49,7 @@ export interface SubIssue {
   title: string;
   priority: number;
   createdAt: string;
+  cycle: Cycle | null;
   assignee: Assignee | null;
   state: WorkflowState;
   labels: { nodes: Label[] };

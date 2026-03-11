@@ -163,6 +163,13 @@ const CHILD_FIELDS = `
   title
   priority
   createdAt
+  cycle {
+    id
+    name
+    number
+    startsAt
+    endsAt
+  }
   history(first: 20) {
     nodes {
       createdAt
@@ -198,6 +205,13 @@ const CHILD_FIELDS = `
       title
       priority
       createdAt
+      cycle {
+        id
+        name
+        number
+        startsAt
+        endsAt
+      }
       history(first: 20) {
         nodes {
           createdAt
