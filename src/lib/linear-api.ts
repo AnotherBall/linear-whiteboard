@@ -153,6 +153,9 @@ const ISSUE_FIELDS = `
     name
     avatarUrl
   }
+  parent {
+    id
+  }
   labels {
     nodes {
       id
@@ -262,6 +265,7 @@ interface IssueNodeRaw {
   state: { id: string; name: string; type: string; color: string };
   cycle: { id: string; name: string | null; number: number; startsAt: string; endsAt: string } | null;
   project: { id: string; name: string } | null;
+  parent: { id: string } | null;
   assignee: { id: string; name: string; avatarUrl: string | null } | null;
   labels: { nodes: { id: string; name: string; color: string }[] };
   children: {
@@ -273,7 +277,7 @@ interface IssueNodeRaw {
 interface CustomViewRaw {
   id: string;
   name: string;
-  viewPreferencesValues: { issueGrouping: string | null; viewOrdering: string | null; viewOrderingDirection: string | null } | null;
+  viewPreferencesValues: { issueGrouping: string | null; viewOrdering: string | null; viewOrderingDirection: string | null; showSubIssues: boolean | null } | null;
   issues: {
     pageInfo: PageInfo;
     nodes: IssueNodeRaw[];
@@ -289,7 +293,7 @@ export async function fetchCustomViewIssues(
 
   // 1. Fetch all issues with pagination
   const allIssueNodes: IssueNodeRaw[] = [];
-  let viewMeta: { id: string; name: string; viewPreferencesValues: { issueGrouping: string | null; viewOrdering: string | null; viewOrderingDirection: string | null } | null; userViewPreferences?: any; organizationViewPreferences?: any } | null = null;
+  let viewMeta: { id: string; name: string; viewPreferencesValues: { issueGrouping: string | null; viewOrdering: string | null; viewOrderingDirection: string | null; showSubIssues: boolean | null } | null; userViewPreferences?: any; organizationViewPreferences?: any } | null = null;
   let issuesCursor: string | null = null;
   let hasMoreIssues = true;
 
@@ -303,12 +307,14 @@ export async function fetchCustomViewIssues(
             issueGrouping
             viewOrdering
             viewOrderingDirection
+            showSubIssues
           }
           userViewPreferences {
             preferences {
               issueGrouping
               viewOrdering
               viewOrderingDirection
+              showSubIssues
             }
           }
           organizationViewPreferences {
@@ -316,6 +322,7 @@ export async function fetchCustomViewIssues(
               issueGrouping
               viewOrdering
               viewOrderingDirection
+              showSubIssues
             }
           }
           issues(first: $first, after: $after) {
@@ -391,15 +398,18 @@ export async function fetchCustomViewIssues(
   }
 
   // 3. Build result
-  const issues: Issue[] = allIssueNodes.map((n) => ({
-    ...n,
-    children: { nodes: n.children.nodes },
-  }));
-
-  // Sort issues based on view ordering preference (user > org > view default)
   const userPrefs = viewMeta!.userViewPreferences?.preferences;
   const orgPrefs = viewMeta!.organizationViewPreferences?.preferences;
   const viewPrefs = viewMeta!.viewPreferencesValues;
+
+  // Filter out sub-issues when "Show sub-issues" is off in the view
+  const showSubIssues = userPrefs?.showSubIssues ?? orgPrefs?.showSubIssues ?? viewPrefs?.showSubIssues ?? false;
+  const issues: Issue[] = allIssueNodes
+    .filter((n) => showSubIssues || n.parent === null)
+    .map((n) => ({
+      ...n,
+      children: { nodes: n.children.nodes },
+    }));
   const ordering = userPrefs?.viewOrdering ?? orgPrefs?.viewOrdering ?? viewPrefs?.viewOrdering ?? "manual";
   const dirStr = userPrefs?.viewOrderingDirection ?? orgPrefs?.viewOrderingDirection ?? viewPrefs?.viewOrderingDirection;
   const descending = dirStr === "desc" || dirStr === "descending";
