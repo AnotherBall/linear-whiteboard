@@ -35,6 +35,8 @@ const closeBtn = document.getElementById("close-btn") as HTMLButtonElement;
 const errorSettingsBtn = document.getElementById("error-settings-btn") as HTMLButtonElement;
 const cycleBtnEl = document.getElementById("cycle-btn") as HTMLButtonElement;
 const cyclePanelEl = document.getElementById("cycle-panel") as HTMLElement;
+const assigneeBtnEl = document.getElementById("assignee-btn") as HTMLButtonElement;
+const assigneePanelEl = document.getElementById("assignee-panel") as HTMLElement;
 const pagerEl = document.getElementById("pager") as HTMLElement;
 const pagerPrevBtn = document.getElementById("pager-prev") as HTMLButtonElement;
 const pagerNextBtn = document.getElementById("pager-next") as HTMLButtonElement;
@@ -79,6 +81,9 @@ document.addEventListener("click", (e) => {
   }
   if (!cyclePanelEl.hidden && !target.closest(".cycle-control")) {
     cyclePanelEl.hidden = true;
+  }
+  if (!assigneePanelEl.hidden && !target.closest(".assignee-control")) {
+    assigneePanelEl.hidden = true;
   }
 });
 
@@ -159,6 +164,103 @@ cycleBtnEl.addEventListener("click", () => {
   cyclePanelEl.hidden = !cyclePanelEl.hidden;
 });
 
+// -- Assignee highlight --
+
+let selectedAssigneeId: string | null = null;
+
+function collectAssignees(issues: Issue[]): Assignee[] {
+  const map = new Map<string, Assignee>();
+  for (const issue of issues) {
+    for (const child of issue.children.nodes) {
+      if (child.assignee && !map.has(child.assignee.id)) {
+        map.set(child.assignee.id, child.assignee);
+      }
+      if (child.children?.nodes) {
+        for (const gc of child.children.nodes) {
+          if (gc.assignee && !map.has(gc.assignee.id)) {
+            map.set(gc.assignee.id, gc.assignee);
+          }
+        }
+      }
+    }
+  }
+  return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function updateAssigneeBtnLabel() {
+  if (!selectedAssigneeId) {
+    assigneeBtnEl.textContent = "👤 All";
+  } else {
+    const allAssignees = collectAssignees(cachedAllIssues);
+    const assignee = allAssignees.find((a) => a.id === selectedAssigneeId);
+    assigneeBtnEl.textContent = assignee ? `👤 ${assignee.name}` : "👤 All";
+  }
+}
+
+function buildAssigneePanel() {
+  const filteredIssues = filterByCycle(cachedAllIssues, selectedCycleId);
+  const assignees = collectAssignees(filteredIssues);
+  assigneePanelEl.innerHTML = "";
+
+  // "All" option
+  const allBtn = document.createElement("button");
+  allBtn.className = "assignee-option" + (selectedAssigneeId === null ? " active" : "");
+  allBtn.textContent = "All";
+  allBtn.addEventListener("click", () => {
+    selectedAssigneeId = null;
+    assigneePanelEl.hidden = true;
+    updateAssigneeBtnLabel();
+    applyAssigneeHighlight();
+    buildAssigneePanel();
+  });
+  assigneePanelEl.appendChild(allBtn);
+
+  for (const assignee of assignees) {
+    const btn = document.createElement("button");
+    btn.className = "assignee-option" + (assignee.id === selectedAssigneeId ? " active" : "");
+
+    let avatarHtml = "";
+    if (assignee.avatarUrl) {
+      avatarHtml = `<img class="assignee-option-avatar" src="${assignee.avatarUrl}" alt="">`;
+    } else {
+      const initial = assignee.name.charAt(0).toUpperCase();
+      avatarHtml = `<div class="assignee-option-initial">${initial}</div>`;
+    }
+    btn.innerHTML = `${avatarHtml}<span>${escapeHtml(assignee.name)}</span>`;
+
+    btn.addEventListener("click", () => {
+      selectedAssigneeId = assignee.id;
+      assigneePanelEl.hidden = true;
+      updateAssigneeBtnLabel();
+      applyAssigneeHighlight();
+      buildAssigneePanel();
+    });
+    assigneePanelEl.appendChild(btn);
+  }
+}
+
+function applyAssigneeHighlight() {
+  if (!selectedAssigneeId) {
+    boardEl.classList.remove("assignee-highlight");
+    boardEl.querySelectorAll(".card-highlighted").forEach((el) => el.classList.remove("card-highlighted"));
+    return;
+  }
+
+  boardEl.classList.add("assignee-highlight");
+  boardEl.querySelectorAll(".card").forEach((cardEl) => {
+    const assigneeId = (cardEl as HTMLElement).dataset.assigneeId;
+    if (assigneeId === selectedAssigneeId) {
+      cardEl.classList.add("card-highlighted");
+    } else {
+      cardEl.classList.remove("card-highlighted");
+    }
+  });
+}
+
+assigneeBtnEl.addEventListener("click", () => {
+  assigneePanelEl.hidden = !assigneePanelEl.hidden;
+});
+
 function applyFilterAndRender() {
   const filteredIssues = filterByCycle(cachedAllIssues, selectedCycleId);
   if (filteredIssues.length === 0) {
@@ -168,6 +270,8 @@ function applyFilterAndRender() {
   currentGroups = groupIssues(filteredIssues, cachedGrouping);
   currentGroupIndex = 0;
   renderCurrentGroup();
+  buildAssigneePanel();
+  applyAssigneeHighlight();
 }
 
 // -- Grouping --
@@ -548,6 +652,9 @@ function createCard(sub: SubIssue, isFirstRow = false): HTMLElement {
   card.target = "_blank";
   card.dataset.priority = String(sub.priority);
   card.dataset.issueId = sub.id;
+  if (sub.assignee) {
+    card.dataset.assigneeId = sub.assignee.id;
+  }
 
   // Tooltip ref (used by drag and hover)
   let tooltipEl: HTMLElement | null = null;
@@ -808,6 +915,6 @@ loadBoard();
 
 // Auto-refresh (skip if a panel is open)
 setInterval(() => {
-  if (!cyclePanelEl.hidden || !zoomPanel.hidden) return;
+  if (!cyclePanelEl.hidden || !zoomPanel.hidden || !assigneePanelEl.hidden) return;
   loadBoard();
 }, REFRESH_INTERVAL_MS);
