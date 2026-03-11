@@ -126,6 +126,11 @@ const ISSUE_FIELDS = `
   title
   priority
   sortOrder
+  prioritySortOrder
+  team {
+    id
+    name
+  }
   state {
     id
     name
@@ -252,6 +257,8 @@ interface IssueNodeRaw {
   title: string;
   priority: number;
   sortOrder: number;
+  prioritySortOrder: number;
+  team: { id: string; name: string };
   state: { id: string; name: string; type: string; color: string };
   cycle: { id: string; name: string | null; number: number; startsAt: string; endsAt: string } | null;
   project: { id: string; name: string } | null;
@@ -266,7 +273,7 @@ interface IssueNodeRaw {
 interface CustomViewRaw {
   id: string;
   name: string;
-  viewPreferencesValues: { issueGrouping: string | null } | null;
+  viewPreferencesValues: { issueGrouping: string | null; viewOrdering: string | null; viewOrderingDirection: string | null } | null;
   issues: {
     pageInfo: PageInfo;
     nodes: IssueNodeRaw[];
@@ -282,7 +289,7 @@ export async function fetchCustomViewIssues(
 
   // 1. Fetch all issues with pagination
   const allIssueNodes: IssueNodeRaw[] = [];
-  let viewMeta: { id: string; name: string; viewPreferencesValues: { issueGrouping: string | null } | null } | null = null;
+  let viewMeta: { id: string; name: string; viewPreferencesValues: { issueGrouping: string | null; viewOrdering: string | null; viewOrderingDirection: string | null } | null; userViewPreferences?: any; organizationViewPreferences?: any } | null = null;
   let issuesCursor: string | null = null;
   let hasMoreIssues = true;
 
@@ -294,6 +301,22 @@ export async function fetchCustomViewIssues(
           name
           viewPreferencesValues {
             issueGrouping
+            viewOrdering
+            viewOrderingDirection
+          }
+          userViewPreferences {
+            preferences {
+              issueGrouping
+              viewOrdering
+              viewOrderingDirection
+            }
+          }
+          organizationViewPreferences {
+            preferences {
+              issueGrouping
+              viewOrdering
+              viewOrderingDirection
+            }
           }
           issues(first: $first, after: $after) {
             pageInfo {
@@ -328,6 +351,8 @@ export async function fetchCustomViewIssues(
         id: result.customView.id,
         name: result.customView.name,
         viewPreferencesValues: result.customView.viewPreferencesValues,
+        userViewPreferences: (result.customView as any).userViewPreferences,
+        organizationViewPreferences: (result.customView as any).organizationViewPreferences,
       };
     }
 
@@ -371,13 +396,49 @@ export async function fetchCustomViewIssues(
     children: { nodes: n.children.nodes },
   }));
 
-  // Sort issues by sortOrder ascending (lower value = higher in the list, matching Linear UI)
-  issues.sort((a, b) => a.sortOrder - b.sortOrder);
+  // Sort issues based on view ordering preference (user > org > view default)
+  const userPrefs = viewMeta!.userViewPreferences?.preferences;
+  const orgPrefs = viewMeta!.organizationViewPreferences?.preferences;
+  const viewPrefs = viewMeta!.viewPreferencesValues;
+  const ordering = userPrefs?.viewOrdering ?? orgPrefs?.viewOrdering ?? viewPrefs?.viewOrdering ?? "manual";
+  const dirStr = userPrefs?.viewOrderingDirection ?? orgPrefs?.viewOrderingDirection ?? viewPrefs?.viewOrderingDirection;
+  const descending = dirStr === "desc" || dirStr === "descending";
+  const direction = descending ? -1 : 1;
+
+  issues.sort((a, b) => {
+    switch (ordering) {
+      case "priority": {
+        // No Priority (0) always goes to the end
+        if (a.priority === 0 && b.priority !== 0) return 1;
+        if (b.priority === 0 && a.priority !== 0) return -1;
+        // Different priority levels:
+        // desc: Urgent(1) → High(2) → Medium(3) → Low(4) = ascending numeric
+        // asc: Low(4) → Medium(3) → High(2) → Urgent(1) = descending numeric
+        if (a.priority !== b.priority) {
+          return descending
+            ? a.priority - b.priority
+            : b.priority - a.priority;
+        }
+        // Same priority: sort by prioritySortOrder ascending
+        return a.prioritySortOrder - b.prioritySortOrder;
+      }
+      default:
+        // "manual" and any other ordering: use sortOrder
+        return (a.sortOrder - b.sortOrder) * direction;
+    }
+  });
+
+  // Merge preferences (user > org > view default) for grouping too
+  const mergedPrefs: CustomViewData["viewPreferencesValues"] = {
+    issueGrouping: userPrefs?.issueGrouping ?? orgPrefs?.issueGrouping ?? viewPrefs?.issueGrouping ?? null,
+    viewOrdering: ordering,
+    viewOrderingDirection: dirStr ?? null,
+  };
 
   return {
     id: viewMeta!.id,
     name: viewMeta!.name,
-    viewPreferencesValues: viewMeta!.viewPreferencesValues,
+    viewPreferencesValues: mergedPrefs,
     issues: { nodes: issues },
   };
 }

@@ -1,4 +1,4 @@
-import { getApiKey, getTeamId, getTeamName, extractViewId, getColorLabels } from "../lib/storage";
+import { getApiKey, extractViewId, getColorLabels } from "../lib/storage";
 import { fetchWorkflowStates, fetchCustomViewIssues, fetchTeamCycles, updateIssueState } from "../lib/linear-api";
 import type { WorkflowState, Issue, SubIssue, BoardData, IssueGroup, Assignee, Project, Cycle } from "../lib/types";
 
@@ -741,11 +741,9 @@ async function loadBoard() {
 
     const apiKey = await getApiKey();
     cachedApiKey = apiKey ?? null;
-    const teamId = await getTeamId();
-    const teamName = await getTeamName();
 
-    if (!apiKey || !teamId) {
-      errorTextEl.textContent = "API Key and Team are not configured. Please set them in Settings.";
+    if (!apiKey) {
+      errorTextEl.textContent = "API Key is not configured. Please set it in Settings.";
       showView("error");
       return;
     }
@@ -763,20 +761,29 @@ async function loadBoard() {
       return;
     }
 
-    teamNameEl.textContent = teamName ?? teamId;
+    // Fetch view data first, then derive team from issues
+    const viewData = await fetchCustomViewIssues(apiKey, viewId);
+    cachedAllIssues = viewData.issues.nodes;
+    cachedGrouping = viewData.viewPreferencesValues?.issueGrouping ?? null;
 
-    const [states, viewData, cycles] = await Promise.all([
+    // Detect team from the first issue in the view
+    const detectedTeam = cachedAllIssues.length > 0 ? cachedAllIssues[0].team : null;
+    if (!detectedTeam) {
+      viewNameEl.textContent = viewData.name;
+      showView("empty");
+      return;
+    }
+
+    const teamId = detectedTeam.id;
+    teamNameEl.textContent = detectedTeam.name;
+
+    const [states, cycles] = await Promise.all([
       fetchWorkflowStates(apiKey, teamId),
-      fetchCustomViewIssues(apiKey, viewId),
       fetchTeamCycles(apiKey, teamId),
     ]);
 
     viewNameEl.textContent = viewData.name;
     currentStates = states;
-
-    // Cache issues for cycle switching
-    cachedAllIssues = viewData.issues.nodes;
-    cachedGrouping = viewData.viewPreferencesValues?.issueGrouping ?? null;
 
     if (cachedAllIssues.length === 0) {
       showView("empty");

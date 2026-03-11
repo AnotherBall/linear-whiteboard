@@ -20,18 +20,6 @@ export async function setApiKey(apiKey: string): Promise<void> {
   return set({ apiKey });
 }
 
-export async function getTeamId(): Promise<string | undefined> {
-  return get<string>("teamId");
-}
-
-export async function getTeamName(): Promise<string | undefined> {
-  return get<string>("teamName");
-}
-
-export async function setTeam(teamId: string, teamName: string): Promise<void> {
-  return set({ teamId, teamName });
-}
-
 const DEFAULT_COLOR_LABELS = [
   "Server", "Gurren", "Gurren Lagann", "Lagann",
   "Android", "Design", "iOS", "KMM", "Unity",

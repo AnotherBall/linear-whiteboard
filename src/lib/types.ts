@@ -63,6 +63,8 @@ export interface Issue {
   title: string;
   priority: number;
   sortOrder: number;
+  prioritySortOrder: number;
+  team: Team;
   state: { id: string; name: string; type: string; color: string };
   cycle: Cycle | null;
   project: Project | null;
@@ -103,6 +105,8 @@ export interface BoardData {
 
 export interface ViewPreferences {
   issueGrouping: string | null;
+  viewOrdering: string | null;
+  viewOrderingDirection: string | null;
 }
 
 export interface CustomViewData {
