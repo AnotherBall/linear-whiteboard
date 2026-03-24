@@ -12,8 +12,6 @@ let cachedApiKey: string | null = null;
 const params = new URLSearchParams(window.location.search);
 const viewUrl = params.get("viewUrl");
 
-const REFRESH_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
-
 // State types to hide from the board (Linear built-in types)
 const HIDDEN_STATE_TYPES = new Set(["triage", "backlog", "canceled"]);
 // State names to hide (case-insensitive match)
@@ -913,8 +911,3 @@ async function loadBoard() {
 // Initial load
 loadBoard();
 
-// Auto-refresh (skip if a panel is open)
-setInterval(() => {
-  if (!cyclePanelEl.hidden || !zoomPanel.hidden || !assigneePanelEl.hidden) return;
-  loadBoard();
-}, REFRESH_INTERVAL_MS);
