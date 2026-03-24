@@ -1,0 +1,84 @@
+name: Publish Chrome Extension
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish (e.g. 0.2.0)"
+        required: true
+        type: string
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Update version in manifest.json and package.json
+        run: |
+          jq --arg v "${{ inputs.version }}" '.version = $v' manifest.json > manifest.tmp && mv manifest.tmp manifest.json
+          jq --arg v "${{ inputs.version }}" '.version = $v' package.json > package.tmp && mv package.tmp package.json
+
+      - name: Build
+        run: npm run build
+
+      - name: Create zip
+        run: cd dist && zip -r ../extension.zip .
+
+      - name: Get access token
+        id: token
+        run: |
+          RESPONSE=$(curl -s -X POST "https://oauth2.googleapis.com/token" \
+            -d "client_id=${{ secrets.CHROME_CLIENT_ID }}" \
+            -d "client_secret=${{ secrets.CHROME_CLIENT_SECRET }}" \
+            -d "refresh_token=${{ secrets.CHROME_REFRESH_TOKEN }}" \
+            -d "grant_type=refresh_token")
+          ACCESS_TOKEN=$(echo "$RESPONSE" | jq -r '.access_token')
+          if [ "$ACCESS_TOKEN" = "null" ] || [ -z "$ACCESS_TOKEN" ]; then
+            echo "Failed to get access token"
+            echo "$RESPONSE"
+            exit 1
+          fi
+          echo "::add-mask::$ACCESS_TOKEN"
+          echo "access_token=$ACCESS_TOKEN" >> "$GITHUB_OUTPUT"
+
+      - name: Upload to Chrome Web Store
+        run: |
+          RESPONSE=$(curl -s -w "\n%{http_code}" \
+            -X PUT "https://www.googleapis.com/upload/chromewebstore/v1.1/items/${{ secrets.CHROME_EXTENSION_ID }}" \
+            -H "Authorization: Bearer ${{ steps.token.outputs.access_token }}" \
+            -H "x-goog-api-version: 2" \
+            -T extension.zip)
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+          echo "$BODY"
+          UPLOAD_STATUS=$(echo "$BODY" | jq -r '.uploadState')
+          if [ "$UPLOAD_STATUS" != "SUCCESS" ]; then
+            echo "Upload failed with status: $UPLOAD_STATUS"
+            exit 1
+          fi
+
+      - name: Submit for review
+        run: |
+          RESPONSE=$(curl -s -w "\n%{http_code}" \
+            -X POST "https://www.googleapis.com/chromewebstore/v1.1/items/${{ secrets.CHROME_EXTENSION_ID }}/publish?publishTarget=trustedTesters" \
+            -H "Authorization: Bearer ${{ steps.token.outputs.access_token }}" \
+            -H "x-goog-api-version: 2" \
+            -H "Content-Length: 0")
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+          echo "$BODY"
+          STATUS=$(echo "$BODY" | jq -r '.status[0]')
+          if [ "$STATUS" != "OK" ] && [ "$STATUS" != "PUBLISHED_WITH_FRICTION_WARNING" ]; then
+            echo "Publish failed with status: $STATUS"
+            exit 1
+          fi
+          echo "Successfully submitted for review!"
