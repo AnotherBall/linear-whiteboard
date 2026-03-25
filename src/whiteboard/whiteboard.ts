@@ -1,5 +1,5 @@
 import { getApiKey, extractViewId, getColorLabels } from "../lib/storage";
-import { fetchWorkflowStates, fetchCustomViewIssues, fetchTeamCycles, updateIssueState } from "../lib/linear-api";
+import { fetchWorkflowStates, fetchCustomViewFirstPage, fetchCustomViewRemaining, fetchTeamCycles, updateIssueState } from "../lib/linear-api";
 import type { WorkflowState, Issue, SubIssue, BoardData, IssueGroup, Assignee, Project, Cycle } from "../lib/types";
 
 // Color label whitelist (loaded from storage)
@@ -907,11 +907,9 @@ async function loadBoard() {
   showView("loading");
 
   try {
-    // Load color label whitelist
-    const colorLabels = await getColorLabels();
+    // Load color label whitelist and API key in parallel
+    const [colorLabels, apiKey] = await Promise.all([getColorLabels(), getApiKey()]);
     colorLabelSet = new Set(colorLabels);
-
-    const apiKey = await getApiKey();
     cachedApiKey = apiKey ?? null;
 
     if (!apiKey) {
@@ -933,27 +931,28 @@ async function loadBoard() {
       return;
     }
 
-    // Fetch view data first, then derive team from issues
-    const viewData = await fetchCustomViewIssues(apiKey, viewId);
-    cachedAllIssues = viewData.issues.nodes;
-    cachedGrouping = viewData.viewPreferencesValues?.issueGrouping ?? null;
+    // Fetch first page to get teamId early
+    const firstPage = await fetchCustomViewFirstPage(apiKey, viewId);
 
-    // Detect team from the first issue in the view
-    const detectedTeam = cachedAllIssues.length > 0 ? cachedAllIssues[0].team : null;
+    // Detect team from the first page
+    const detectedTeam = firstPage.issueNodes.length > 0 ? firstPage.issueNodes[0].team : null;
     if (!detectedTeam) {
-      viewNameEl.textContent = viewData.name;
+      viewNameEl.textContent = firstPage.viewMeta.name;
       showView("empty");
       return;
     }
 
     const teamId = detectedTeam.id;
 
-
-    const [states, cycles] = await Promise.all([
+    // Fetch remaining issues/children, states, and cycles in parallel
+    const [viewData, states, cycles] = await Promise.all([
+      fetchCustomViewRemaining(apiKey, viewId, firstPage),
       fetchWorkflowStates(apiKey, teamId),
       fetchTeamCycles(apiKey, teamId),
     ]);
 
+    cachedAllIssues = viewData.issues.nodes;
+    cachedGrouping = viewData.viewPreferencesValues?.issueGrouping ?? null;
     viewNameEl.textContent = viewData.name;
     currentStates = states;
 
