@@ -284,92 +284,125 @@ interface CustomViewRaw {
   };
 }
 
-// Fetch issues from a Custom View with their sub-issues (fully paginated)
-export async function fetchCustomViewIssues(
-  apiKey: string,
-  viewId: string
-): Promise<CustomViewData> {
-  const PAGE_SIZE = 100;
-
-  // 1. Fetch all issues with pagination
-  const allIssueNodes: IssueNodeRaw[] = [];
-  let viewMeta: { id: string; name: string; viewPreferencesValues: { issueGrouping: string | null; viewOrdering: string | null; viewOrderingDirection: string | null; showSubIssues: boolean | null } | null; userViewPreferences?: any; organizationViewPreferences?: any } | null = null;
-  let issuesCursor: string | null = null;
-  let hasMoreIssues = true;
-
-  while (hasMoreIssues) {
-    const query = `
-      query BoardData($viewId: String!, $first: Int!, $after: String) {
-        customView(id: $viewId) {
-          id
-          name
-          viewPreferencesValues {
-            issueGrouping
-            viewOrdering
-            viewOrderingDirection
-            showSubIssues
-          }
-          userViewPreferences {
-            preferences {
-              issueGrouping
-              viewOrdering
-              viewOrderingDirection
-              showSubIssues
-            }
-          }
-          organizationViewPreferences {
-            preferences {
-              issueGrouping
-              viewOrdering
-              viewOrderingDirection
-              showSubIssues
-            }
-          }
-          issues(first: $first, after: $after) {
+// Shared query for fetching custom view issues
+const CUSTOM_VIEW_QUERY = `
+  query BoardData($viewId: String!, $first: Int!, $after: String) {
+    customView(id: $viewId) {
+      id
+      name
+      viewPreferencesValues {
+        issueGrouping
+        viewOrdering
+        viewOrderingDirection
+        showSubIssues
+      }
+      userViewPreferences {
+        preferences {
+          issueGrouping
+          viewOrdering
+          viewOrderingDirection
+          showSubIssues
+        }
+      }
+      organizationViewPreferences {
+        preferences {
+          issueGrouping
+          viewOrdering
+          viewOrderingDirection
+          showSubIssues
+        }
+      }
+      issues(first: $first, after: $after) {
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+        nodes {
+          ${ISSUE_FIELDS}
+          children(first: $first) {
             pageInfo {
               hasNextPage
               endCursor
             }
             nodes {
-              ${ISSUE_FIELDS}
-              children(first: $first) {
-                pageInfo {
-                  hasNextPage
-                  endCursor
-                }
-                nodes {
-                  ${CHILD_FIELDS}
-                }
-              }
+              ${CHILD_FIELDS}
             }
           }
         }
       }
-    `;
+    }
+  }
+`;
 
-    const result: { customView: CustomViewRaw } = await fetchGraphQL<{ customView: CustomViewRaw }>(
+interface ViewMeta {
+  id: string;
+  name: string;
+  viewPreferencesValues: { issueGrouping: string | null; viewOrdering: string | null; viewOrderingDirection: string | null; showSubIssues: boolean | null } | null;
+  userViewPreferences?: any;
+  organizationViewPreferences?: any;
+}
+
+export interface FirstPageResult {
+  viewMeta: ViewMeta;
+  issueNodes: IssueNodeRaw[];
+  hasNextPage: boolean;
+  endCursor: string | null;
+}
+
+// Fetch only the first page of issues (returns teamId early so callers can parallelize)
+export async function fetchCustomViewFirstPage(
+  apiKey: string,
+  viewId: string
+): Promise<FirstPageResult> {
+  const PAGE_SIZE = 100;
+  const result = await fetchGraphQL<{ customView: CustomViewRaw }>(
+    apiKey,
+    CUSTOM_VIEW_QUERY,
+    { viewId, first: PAGE_SIZE, after: null }
+  );
+
+  const cv = result.customView;
+  return {
+    viewMeta: {
+      id: cv.id,
+      name: cv.name,
+      viewPreferencesValues: cv.viewPreferencesValues,
+      userViewPreferences: (cv as any).userViewPreferences,
+      organizationViewPreferences: (cv as any).organizationViewPreferences,
+    },
+    issueNodes: cv.issues.nodes,
+    hasNextPage: cv.issues.pageInfo.hasNextPage,
+    endCursor: cv.issues.pageInfo.endCursor,
+  };
+}
+
+// Fetch remaining issue pages and all remaining children, then build final result
+export async function fetchCustomViewRemaining(
+  apiKey: string,
+  viewId: string,
+  firstPage: FirstPageResult
+): Promise<CustomViewData> {
+  const PAGE_SIZE = 100;
+  const allIssueNodes: IssueNodeRaw[] = [...firstPage.issueNodes];
+
+  // Fetch remaining issue pages
+  let hasMoreIssues = firstPage.hasNextPage;
+  let issuesCursor = firstPage.endCursor;
+
+  while (hasMoreIssues) {
+    const result = await fetchGraphQL<{ customView: CustomViewRaw }>(
       apiKey,
-      query,
+      CUSTOM_VIEW_QUERY,
       { viewId, first: PAGE_SIZE, after: issuesCursor }
     );
-
-    if (!viewMeta) {
-      viewMeta = {
-        id: result.customView.id,
-        name: result.customView.name,
-        viewPreferencesValues: result.customView.viewPreferencesValues,
-        userViewPreferences: (result.customView as any).userViewPreferences,
-        organizationViewPreferences: (result.customView as any).organizationViewPreferences,
-      };
-    }
 
     allIssueNodes.push(...result.customView.issues.nodes);
     hasMoreIssues = result.customView.issues.pageInfo.hasNextPage;
     issuesCursor = result.customView.issues.pageInfo.endCursor;
   }
 
-  // 2. For issues whose children have more pages, fetch remaining children
-  for (const issue of allIssueNodes) {
+  // Fetch remaining children in parallel (one promise per issue that needs more pages)
+  await Promise.all(allIssueNodes.map(async (issue) => {
     let childPageInfo = issue.children.pageInfo;
     while (childPageInfo.hasNextPage) {
       const query = `
@@ -395,14 +428,14 @@ export async function fetchCustomViewIssues(
       issue.children.nodes.push(...data.issue.children.nodes);
       childPageInfo = data.issue.children.pageInfo;
     }
-  }
+  }));
 
-  // 3. Build result
-  const userPrefs = viewMeta!.userViewPreferences?.preferences;
-  const orgPrefs = viewMeta!.organizationViewPreferences?.preferences;
-  const viewPrefs = viewMeta!.viewPreferencesValues;
+  // Build result
+  const viewMeta = firstPage.viewMeta;
+  const userPrefs = viewMeta.userViewPreferences?.preferences;
+  const orgPrefs = viewMeta.organizationViewPreferences?.preferences;
+  const viewPrefs = viewMeta.viewPreferencesValues;
 
-  // Filter out sub-issues when "Show sub-issues" is off in the view
   const showSubIssues = userPrefs?.showSubIssues ?? orgPrefs?.showSubIssues ?? viewPrefs?.showSubIssues ?? false;
   const issues: Issue[] = allIssueNodes
     .filter((n) => showSubIssues || n.parent === null)
@@ -418,27 +451,20 @@ export async function fetchCustomViewIssues(
   issues.sort((a, b) => {
     switch (ordering) {
       case "priority": {
-        // No Priority (0) always goes to the end
         if (a.priority === 0 && b.priority !== 0) return 1;
         if (b.priority === 0 && a.priority !== 0) return -1;
-        // Different priority levels:
-        // desc: Urgent(1) → High(2) → Medium(3) → Low(4) = ascending numeric
-        // asc: Low(4) → Medium(3) → High(2) → Urgent(1) = descending numeric
         if (a.priority !== b.priority) {
           return descending
             ? a.priority - b.priority
             : b.priority - a.priority;
         }
-        // Same priority: sort by prioritySortOrder ascending
         return a.prioritySortOrder - b.prioritySortOrder;
       }
       default:
-        // "manual" and any other ordering: use sortOrder
         return (a.sortOrder - b.sortOrder) * direction;
     }
   });
 
-  // Merge preferences (user > org > view default) for grouping too
   const mergedPrefs: CustomViewData["viewPreferencesValues"] = {
     issueGrouping: userPrefs?.issueGrouping ?? orgPrefs?.issueGrouping ?? viewPrefs?.issueGrouping ?? null,
     viewOrdering: ordering,
@@ -446,8 +472,8 @@ export async function fetchCustomViewIssues(
   };
 
   return {
-    id: viewMeta!.id,
-    name: viewMeta!.name,
+    id: viewMeta.id,
+    name: viewMeta.name,
     viewPreferencesValues: mergedPrefs,
     issues: { nodes: issues },
   };
