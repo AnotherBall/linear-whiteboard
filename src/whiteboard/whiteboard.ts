@@ -25,7 +25,6 @@ const errorEl = document.getElementById("error") as HTMLElement;
 const errorTextEl = document.getElementById("error-text") as HTMLElement;
 const emptyEl = document.getElementById("empty") as HTMLElement;
 const boardEl = document.getElementById("board") as HTMLElement;
-const teamNameEl = document.getElementById("team-name") as HTMLElement;
 const viewNameEl = document.getElementById("view-name") as HTMLElement;
 const refreshBtn = document.getElementById("refresh-btn") as HTMLButtonElement;
 const settingsBtn = document.getElementById("settings-btn") as HTMLButtonElement;
@@ -35,6 +34,10 @@ const cycleBtnEl = document.getElementById("cycle-btn") as HTMLButtonElement;
 const cyclePanelEl = document.getElementById("cycle-panel") as HTMLElement;
 const assigneeBtnEl = document.getElementById("assignee-btn") as HTMLButtonElement;
 const assigneePanelEl = document.getElementById("assignee-panel") as HTMLElement;
+const assigneeNavEl = document.getElementById("assignee-nav") as HTMLElement;
+const assigneePrevBtn = document.getElementById("assignee-prev") as HTMLButtonElement;
+const assigneeNextBtn = document.getElementById("assignee-next") as HTMLButtonElement;
+const assigneeNavInfoEl = document.getElementById("assignee-nav-info") as HTMLElement;
 const pagerEl = document.getElementById("pager") as HTMLElement;
 const pagerPrevBtn = document.getElementById("pager-prev") as HTMLButtonElement;
 const pagerNextBtn = document.getElementById("pager-next") as HTMLButtonElement;
@@ -237,10 +240,16 @@ function buildAssigneePanel() {
   }
 }
 
+// -- Assignee card navigation --
+
+let assigneeNavIndex = -1;
+
 function applyAssigneeHighlight() {
   if (!selectedAssigneeId) {
     boardEl.classList.remove("assignee-highlight");
     boardEl.querySelectorAll(".card-highlighted").forEach((el) => el.classList.remove("card-highlighted"));
+    assigneeNavEl.hidden = true;
+    assigneeNavIndex = -1;
     return;
   }
 
@@ -253,7 +262,65 @@ function applyAssigneeHighlight() {
       cardEl.classList.remove("card-highlighted");
     }
   });
+
+  // Show navigation if there are matching cards
+  const cards = getHighlightedCards();
+  if (cards.length > 0) {
+    assigneeNavEl.hidden = false;
+    assigneeNavIndex = 0;
+    focusAssigneeCard();
+  } else {
+    assigneeNavEl.hidden = true;
+    assigneeNavIndex = -1;
+  }
 }
+
+function getHighlightedCards(): HTMLElement[] {
+  return Array.from(boardEl.querySelectorAll<HTMLElement>(".card-highlighted"));
+}
+
+function focusAssigneeCard() {
+  const cards = getHighlightedCards();
+  if (cards.length === 0) return;
+
+  // Remove previous focus
+  boardEl.querySelectorAll(".card-focused").forEach((el) => el.classList.remove("card-focused"));
+
+  const card = cards[assigneeNavIndex];
+
+  // Expand collapsed wrapper if the card is hidden
+  const wrapper = card.closest(".cell-card-wrapper");
+  if (wrapper?.classList.contains("collapsed")) {
+    wrapper.classList.remove("collapsed");
+    const toggleBtn = wrapper.parentElement?.querySelector(".cell-toggle-btn") as HTMLButtonElement | null;
+    if (toggleBtn) {
+      toggleBtn.textContent = "Show less";
+    }
+  }
+
+  card.classList.add("card-focused");
+  card.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
+
+  updateAssigneeNavInfo(cards.length);
+}
+
+function updateAssigneeNavInfo(total: number) {
+  assigneeNavInfoEl.textContent = `${assigneeNavIndex + 1} / ${total}`;
+}
+
+assigneePrevBtn.addEventListener("click", () => {
+  const cards = getHighlightedCards();
+  if (cards.length === 0) return;
+  assigneeNavIndex = (assigneeNavIndex - 1 + cards.length) % cards.length;
+  focusAssigneeCard();
+});
+
+assigneeNextBtn.addEventListener("click", () => {
+  const cards = getHighlightedCards();
+  if (cards.length === 0) return;
+  assigneeNavIndex = (assigneeNavIndex + 1) % cards.length;
+  focusAssigneeCard();
+});
 
 assigneeBtnEl.addEventListener("click", () => {
   assigneePanelEl.hidden = !assigneePanelEl.hidden;
@@ -880,7 +947,7 @@ async function loadBoard() {
     }
 
     const teamId = detectedTeam.id;
-    teamNameEl.textContent = detectedTeam.name;
+
 
     const [states, cycles] = await Promise.all([
       fetchWorkflowStates(apiKey, teamId),

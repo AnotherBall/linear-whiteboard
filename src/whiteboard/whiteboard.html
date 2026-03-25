@@ -9,7 +9,6 @@
 <body>
   <header class="toolbar">
     <div class="toolbar-left">
-      <span id="team-name" class="team-badge">--</span>
       <span id="view-name" class="view-badge"></span>
       <div class="cycle-control">
         <button id="cycle-btn" class="toolbar-btn cycle-btn"></button>
@@ -17,6 +16,11 @@
       </div>
       <div class="assignee-control">
         <button id="assignee-btn" class="toolbar-btn assignee-btn">👤 All</button>
+        <div id="assignee-nav" class="assignee-nav" hidden>
+          <button id="assignee-prev" class="assignee-nav-btn">◀</button>
+          <span id="assignee-nav-info" class="assignee-nav-info"></span>
+          <button id="assignee-next" class="assignee-nav-btn">▶</button>
+        </div>
         <div id="assignee-panel" class="assignee-panel" hidden></div>
       </div>
     </div>
