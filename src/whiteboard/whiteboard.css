@@ -57,14 +57,6 @@ body {
   justify-content: flex-end;
 }
 
-.team-badge {
-  font-size: 11px;
-  font-weight: 500;
-  background: #2A2B34;
-  color: #9BA1E5;
-  padding: 3px 10px;
-  border-radius: 10px;
-}
 
 .view-badge {
   font-size: 11px;
@@ -126,6 +118,9 @@ body {
 /* Assignee highlight control */
 .assignee-control {
   position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .assignee-btn {
@@ -208,6 +203,47 @@ body {
 .board.assignee-highlight .card.card-highlighted {
   opacity: 1;
   box-shadow: 0 0 8px rgba(94, 106, 210, 0.6), 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+.board.assignee-highlight .card.card-focused {
+  outline: 2px solid #5E6AD2;
+  outline-offset: 2px;
+  position: relative;
+  z-index: 10;
+}
+
+.board.assignee-highlight .board-cell:has(.card-focused),
+.board.assignee-highlight .cell-card-wrapper:has(.card-focused) {
+  overflow: visible;
+}
+
+/* Assignee card navigation */
+.assignee-nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.assignee-nav-btn {
+  background: #2A2B34;
+  color: #E2E2E3;
+  border: 1px solid #3B3C42;
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 10px;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.assignee-nav-btn:hover:not(:disabled) {
+  background: #3B3C42;
+}
+
+.assignee-nav-info {
+  font-size: 11px;
+  color: #8B8C90;
+  min-width: 40px;
+  text-align: center;
 }
 
 .toolbar-btn {
