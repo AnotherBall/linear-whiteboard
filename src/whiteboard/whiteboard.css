@@ -74,6 +74,7 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  height: 28px;
 }
 
 .cycle-panel {
@@ -129,6 +130,9 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
 }
 
 .assignee-panel {
@@ -228,11 +232,11 @@ body {
   background: #2A2B34;
   color: #E2E2E3;
   border: 1px solid #3B3C42;
-  border-radius: 4px;
-  padding: 2px 6px;
+  border-radius: 6px;
+  padding: 0 8px;
   font-size: 10px;
   cursor: pointer;
-  line-height: 1;
+  height: 28px;
 }
 
 .assignee-nav-btn:hover:not(:disabled) {
@@ -621,12 +625,6 @@ body {
   z-index: 30;
 }
 
-/* Priority left border */
-.card[data-priority="1"] { border-left: 3px solid #E5534B; }  /* Urgent */
-.card[data-priority="2"] { border-left: 3px solid #E09B13; }  /* High */
-.card[data-priority="3"] { border-left: 3px solid #E5C242; }  /* Medium */
-.card[data-priority="4"] { border-left: 3px solid #5E6AD2; }  /* Low */
-.card[data-priority="0"] { border-left: 3px solid #4B4C52; }  /* None */
 
 /* Elapsed-days ring around avatar */
 .card-avatar-ring {

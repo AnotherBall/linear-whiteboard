@@ -754,11 +754,11 @@ function createCard(sub: SubIssue, isFirstRow = false): HTMLElement {
     }
   });
 
-  // Use first whitelisted label color as card background
+  // Use first whitelisted label color as card background (25% tint)
   const colorLabel = sub.labels.nodes.find((l) => colorLabelSet.has(l.name));
   if (colorLabel) {
-    card.style.backgroundColor = colorLabel.color + "28";
-    card.style.borderColor = colorLabel.color + "40";
+    card.style.backgroundColor = colorLabel.color + "40";
+    card.style.border = `1px solid ${colorLabel.color}4D`;
   }
 
   // Title only
