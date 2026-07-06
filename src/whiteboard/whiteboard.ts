@@ -1,6 +1,6 @@
 import { getApiKey, extractViewId, getColorLabels } from "../lib/storage";
-import { fetchWorkflowStates, fetchCustomViewFirstPage, fetchCustomViewRemaining, fetchTeamCycles, updateIssueState } from "../lib/linear-api";
-import type { WorkflowState, Issue, SubIssue, BoardData, IssueGroup, Assignee, Project, Cycle } from "../lib/types";
+import { fetchWorkflowStates, fetchCustomViewFirstPage, fetchCustomViewRemaining, fetchTeamCycles, fetchIssueRelations, updateIssueState } from "../lib/linear-api";
+import type { WorkflowState, Issue, SubIssue, BoardData, IssueGroup, Assignee, Project, Cycle, RelatedIssueRef } from "../lib/types";
 
 // Color label whitelist (loaded from storage)
 let colorLabelSet: Set<string> = new Set();
@@ -638,6 +638,34 @@ function renderBoard(data: BoardData) {
   scheduleOverflowCheck();
 }
 
+// -- Blocking relations (Linear "blocks" issue relations) --
+
+// State types that resolve a blocking relation
+const RESOLVED_STATE_TYPES = new Set(["completed", "canceled"]);
+
+// Issues that block this card, ignoring already-resolved blockers
+function blockedByOf(sub: SubIssue): RelatedIssueRef[] {
+  const result: RelatedIssueRef[] = [];
+  for (const rel of sub.inverseRelations?.nodes ?? []) {
+    if (rel.type === "blocks" && rel.issue && !RESOLVED_STATE_TYPES.has(rel.issue.state.type)) {
+      result.push(rel.issue);
+    }
+  }
+  return result;
+}
+
+// Issues this card blocks; a resolved card no longer blocks anything
+function blocksOf(sub: SubIssue): RelatedIssueRef[] {
+  if (RESOLVED_STATE_TYPES.has(sub.state.type)) return [];
+  const result: RelatedIssueRef[] = [];
+  for (const rel of sub.relations?.nodes ?? []) {
+    if (rel.type === "blocks" && rel.relatedIssue && !RESOLVED_STATE_TYPES.has(rel.relatedIssue.state.type)) {
+      result.push(rel.relatedIssue);
+    }
+  }
+  return result;
+}
+
 function cardHtml(sub: SubIssue): string {
   // Use first whitelisted label color as card background (25% tint)
   const colorLabel = sub.labels.nodes.find((l) => colorLabelSet.has(l.name));
@@ -645,6 +673,8 @@ function cardHtml(sub: SubIssue): string {
     ? ` style="background-color:${escapeHtml(colorLabel.color)}40;border:1px solid ${escapeHtml(colorLabel.color)}4D"`
     : "";
   const assigneeAttr = sub.assignee ? ` data-assignee-id="${escapeHtml(sub.assignee.id)}"` : "";
+  // Striped overlay while the card is blocked by unresolved issues
+  const blockedClass = blockedByOf(sub).length > 0 ? " card-blocked" : "";
 
   // Title only
   let inner = `<div class="card-title">${escapeHtml(sub.title)}</div>`;
@@ -674,7 +704,7 @@ function cardHtml(sub: SubIssue): string {
     }
   }
 
-  return `<a class="card" draggable="true" href="https://linear.app/issue/${escapeHtml(sub.identifier)}" target="_blank" data-priority="${sub.priority}" data-issue-id="${escapeHtml(sub.id)}"${assigneeAttr}${styleAttr}>${inner}</a>`;
+  return `<a class="card${blockedClass}" draggable="true" href="https://linear.app/issue/${escapeHtml(sub.identifier)}" target="_blank" data-priority="${sub.priority}" data-issue-id="${escapeHtml(sub.id)}"${assigneeAttr}${styleAttr}>${inner}</a>`;
 }
 
 // After render, expand wrappers whose content doesn't overflow and hide their
@@ -828,6 +858,13 @@ function showTooltipFor(card: HTMLElement) {
   for (const label of sub.labels.nodes) {
     tooltipLabels += `<span class="tooltip-label" style="background:${escapeHtml(label.color)}30;color:${escapeHtml(label.color)}">${escapeHtml(label.name)}</span> `;
   }
+  let tooltipDeps = "";
+  for (const rel of blockedByOf(sub)) {
+    tooltipDeps += `<div class="tooltip-row"><span class="tooltip-dep-blocked">⊘ blocked by</span><span class="tooltip-dep-title">${escapeHtml(rel.title)}</span><span class="tooltip-dep-state">${escapeHtml(rel.state.name)}</span></div>`;
+  }
+  for (const rel of blocksOf(sub)) {
+    tooltipDeps += `<div class="tooltip-row"><span class="tooltip-dep-blocks">→ blocks</span><span class="tooltip-dep-title">${escapeHtml(rel.title)}</span><span class="tooltip-dep-state">${escapeHtml(rel.state.name)}</span></div>`;
+  }
   tooltipEl.innerHTML = `
     <div class="tooltip-identifier">${escapeHtml(sub.identifier)}</div>
     <div class="tooltip-title">${escapeHtml(sub.title)}</div>
@@ -835,6 +872,7 @@ function showTooltipFor(card: HTMLElement) {
     <div class="tooltip-row">Status: ${escapeHtml(sub.state.name)}</div>
     <div class="tooltip-row">Priority: ${priorityLabel(sub.priority)}</div>
     <div class="tooltip-row">In state: ${daysInCurrentState(sub)}d</div>
+    ${tooltipDeps}
     ${tooltipLabels ? `<div class="tooltip-row">${tooltipLabels}</div>` : ""}
   `;
   tooltipEl.classList.add("tooltip-visible");
@@ -938,6 +976,38 @@ function escapeHtml(text: string): string {
   return text.replace(ESCAPE_RE, (c) => ESCAPE_MAP[c]);
 }
 
+// Fetch blocking relations for every card on the board and attach them to
+// the sub-issue objects (rendered by cardHtml / the tooltip)
+async function loadRelations(apiKey: string, issues: Issue[]): Promise<void> {
+  const subs: SubIssue[] = [];
+  for (const issue of issues) {
+    for (const child of issue.children.nodes) {
+      subs.push(child);
+      if (child.children?.nodes) {
+        subs.push(...child.children.nodes);
+      }
+    }
+  }
+  if (subs.length === 0) return;
+
+  const ids = Array.from(new Set(subs.map((s) => s.id)));
+  const relMap = await fetchIssueRelations(apiKey, ids);
+
+  for (const sub of subs) {
+    const rel = relMap.get(sub.id);
+    if (rel) {
+      sub.relations = { nodes: rel.relations };
+      sub.inverseRelations = { nodes: rel.inverseRelations };
+    }
+  }
+
+  const withDeps = subs.filter((s) => blockedByOf(s).length > 0 || blocksOf(s).length > 0);
+  console.log(
+    `[whiteboard] relations: fetched for ${relMap.size}/${ids.length} cards, ${withDeps.length} with active blocking relations`,
+    withDeps.map((s) => s.identifier)
+  );
+}
+
 function showView(view: "loading" | "error" | "empty" | "board") {
   loadingEl.hidden = view !== "loading";
   errorEl.hidden = view !== "error";
@@ -992,6 +1062,14 @@ async function loadBoard() {
       fetchWorkflowStates(apiKey, teamId),
       fetchTeamCycles(apiKey, teamId),
     ]);
+
+    // Attach blocking relations before rendering so the board renders once.
+    // Non-fatal: on failure the board just renders without dependency info.
+    try {
+      await loadRelations(apiKey, viewData.issues.nodes);
+    } catch (e) {
+      console.error("[whiteboard] Failed to fetch issue relations:", e);
+    }
 
     cachedAllIssues = viewData.issues.nodes;
     cachedGrouping = viewData.viewPreferencesValues?.issueGrouping ?? null;
