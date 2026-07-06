@@ -1,4 +1,4 @@
-import type { Team, WorkflowState, CustomViewData, Issue, SubIssue, Cycle } from "./types";
+import type { Team, WorkflowState, CustomViewData, Issue, SubIssue, Cycle, IssueRelationNode, InverseIssueRelationNode } from "./types";
 
 const API_URL = "https://api.linear.app/graphql";
 
@@ -470,6 +470,84 @@ export async function fetchCustomViewRemaining(
     viewPreferencesValues: mergedPrefs,
     issues: { nodes: issues },
   };
+}
+
+// -- Blocking relations --
+// Fetched separately from the main view query: embedding relations in the
+// nested issues/children query exceeds Linear's per-query complexity limit.
+
+export interface IssueRelations {
+  relations: IssueRelationNode[];
+  inverseRelations: InverseIssueRelationNode[];
+}
+
+const RELATIONS_QUERY = `
+  query IssueRelations($ids: [ID!]!, $first: Int!) {
+    issues(filter: { id: { in: $ids } }, first: $first) {
+      nodes {
+        id
+        relations(first: 10) {
+          nodes {
+            type
+            relatedIssue {
+              id
+              title
+              state {
+                name
+                type
+              }
+            }
+          }
+        }
+        inverseRelations(first: 10) {
+          nodes {
+            type
+            issue {
+              id
+              title
+              state {
+                name
+                type
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+`;
+
+// Fetch relations for a set of issues in parallel chunks, keyed by issue id
+export async function fetchIssueRelations(
+  apiKey: string,
+  issueIds: string[]
+): Promise<Map<string, IssueRelations>> {
+  const CHUNK_SIZE = 20;
+  const chunks: string[][] = [];
+  for (let i = 0; i < issueIds.length; i += CHUNK_SIZE) {
+    chunks.push(issueIds.slice(i, i + CHUNK_SIZE));
+  }
+
+  const map = new Map<string, IssueRelations>();
+  await Promise.all(chunks.map(async (ids) => {
+    const data = await fetchGraphQL<{
+      issues: {
+        nodes: {
+          id: string;
+          relations: { nodes: IssueRelationNode[] };
+          inverseRelations: { nodes: InverseIssueRelationNode[] };
+        }[];
+      };
+    }>(apiKey, RELATIONS_QUERY, { ids, first: CHUNK_SIZE });
+    for (const node of data.issues.nodes) {
+      map.set(node.id, {
+        relations: node.relations.nodes,
+        inverseRelations: node.inverseRelations.nodes,
+      });
+    }
+  }));
+
+  return map;
 }
 
 // Update an issue's workflow state

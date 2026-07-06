@@ -43,6 +43,25 @@ export interface IssueHistoryEntry {
   toState: { id: string } | null;
 }
 
+// Minimal reference to an issue on the other side of a relation
+export interface RelatedIssueRef {
+  id: string;
+  title: string;
+  state: { name: string; type: string };
+}
+
+// Relation where this issue is the source (type "blocks": this issue blocks relatedIssue)
+export interface IssueRelationNode {
+  type: string;
+  relatedIssue: RelatedIssueRef | null;
+}
+
+// Relation where this issue is the target (type "blocks": issue blocks this one)
+export interface InverseIssueRelationNode {
+  type: string;
+  issue: RelatedIssueRef | null;
+}
+
 export interface SubIssue {
   id: string;
   identifier: string;
@@ -55,6 +74,8 @@ export interface SubIssue {
   state: WorkflowState;
   labels: { nodes: Label[] };
   history?: { nodes: IssueHistoryEntry[] };
+  relations?: { nodes: IssueRelationNode[] };
+  inverseRelations?: { nodes: InverseIssueRelationNode[] };
   children?: { nodes: SubIssue[] };
 }
 
