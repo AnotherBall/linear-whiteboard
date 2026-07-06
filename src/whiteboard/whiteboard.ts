@@ -12,6 +12,16 @@ let cachedApiKey: string | null = null;
 const params = new URLSearchParams(window.location.search);
 const viewUrl = params.get("viewUrl");
 
+// Workspace slug from the view URL (e.g. https://linear.app/acme/view/... → "acme"),
+// needed to build issue links
+const workspaceSlug = viewUrl?.match(/^https:\/\/linear\.app\/([^/]+)\//)?.[1] ?? null;
+
+function issueUrlFor(identifier: string): string {
+  return workspaceSlug
+    ? `https://linear.app/${workspaceSlug}/issue/${identifier}`
+    : `https://linear.app/issue/${identifier}`;
+}
+
 // State types to hide from the board (Linear built-in types)
 const HIDDEN_STATE_TYPES = new Set(["triage", "backlog", "canceled"]);
 // State names to hide (case-insensitive match)
@@ -596,11 +606,10 @@ function renderBoard(data: BoardData) {
   // Data rows
   for (let rowIdx = 0; rowIdx < data.rows.length; rowIdx++) {
     const row = data.rows[rowIdx];
-    const issueUrl = `https://linear.app/issue/${row.issue.identifier}`;
 
     // Build row label: [status-icon] title on first line, metadata below
     const stateIcon = statusIconSvg(row.issue.state.type, row.issue.state.color);
-    let labelHtml = `<div class="row-title-line">${stateIcon}<a href="${issueUrl}" target="_blank" title="${escapeHtml(row.issue.title)}">${escapeHtml(row.issue.title)}</a></div>`;
+    let labelHtml = `<div class="row-title-line">${stateIcon}<a href="${escapeHtml(issueUrlFor(row.issue.identifier))}" target="_blank" title="${escapeHtml(row.issue.title)}">${escapeHtml(row.issue.title)}</a></div>`;
     labelHtml += `<div class="row-meta">`;
     if (row.issue.project) {
       labelHtml += `<span class="row-project">${escapeHtml(row.issue.project.name)}</span>`;
@@ -704,7 +713,7 @@ function cardHtml(sub: SubIssue): string {
     }
   }
 
-  return `<a class="card${blockedClass}" draggable="true" href="https://linear.app/issue/${escapeHtml(sub.identifier)}" target="_blank" data-priority="${sub.priority}" data-issue-id="${escapeHtml(sub.id)}"${assigneeAttr}${styleAttr}>${inner}</a>`;
+  return `<a class="card${blockedClass}" draggable="true" href="${escapeHtml(issueUrlFor(sub.identifier))}" target="_blank" data-priority="${sub.priority}" data-issue-id="${escapeHtml(sub.id)}"${assigneeAttr}${styleAttr}>${inner}</a>`;
 }
 
 // After render, expand wrappers whose content doesn't overflow and hide their
