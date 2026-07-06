@@ -165,6 +165,7 @@ const ISSUE_FIELDS = `
   }
 `;
 
+// Sub-issues only need the cycle id (for cycle filtering), not full cycle data
 const CHILD_FIELDS = `
   id
   identifier
@@ -173,10 +174,6 @@ const CHILD_FIELDS = `
   createdAt
   cycle {
     id
-    name
-    number
-    startsAt
-    endsAt
   }
   history(first: 20) {
     nodes {
@@ -215,10 +212,6 @@ const CHILD_FIELDS = `
       createdAt
       cycle {
         id
-        name
-        number
-        startsAt
-        endsAt
       }
       history(first: 20) {
         nodes {

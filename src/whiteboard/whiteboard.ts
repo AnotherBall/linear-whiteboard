@@ -524,11 +524,15 @@ function matchesCycle(sub: SubIssue, cycleId: string | null): boolean {
   return sub.cycle?.id === cycleId;
 }
 
+// Sub-issues on the currently rendered board, looked up by delegated event handlers
+let subIssueById = new Map<string, SubIssue>();
+
 // Transform API data into board matrix
 function buildBoardData(states: WorkflowState[], issues: Issue[], cycleId: string | null): BoardData {
   const filtered = filterStates(states);
   const columns = filtered.map((s) => ({ id: s.id, name: s.name, type: s.type, color: s.color }));
 
+  subIssueById = new Map();
   const rows = issues.map((issue) => {
     const cells: Record<string, SubIssue[]> = {};
     for (const col of columns) {
@@ -540,6 +544,7 @@ function buildBoardData(states: WorkflowState[], issues: Issue[], cycleId: strin
         const stateId = child.state.id;
         if (cells[stateId]) {
           cells[stateId].push(child);
+          subIssueById.set(child.id, child);
         }
       }
       if (child.children?.nodes) {
@@ -548,6 +553,7 @@ function buildBoardData(states: WorkflowState[], issues: Issue[], cycleId: strin
             const gcStateId = grandchild.state.id;
             if (cells[gcStateId]) {
               cells[gcStateId].push(grandchild);
+              subIssueById.set(grandchild.id, grandchild);
             }
           }
         }
@@ -569,32 +575,27 @@ function buildBoardData(states: WorkflowState[], issues: Issue[], cycleId: strin
   return { columns, rows };
 }
 
-// Render the board as a CSS Grid
+// Render the board as a CSS Grid.
+// The whole board is built as a single HTML string and inserted with one
+// innerHTML assignment; all interactions (tooltip, drag & drop, toggle) are
+// handled by delegated listeners on boardEl, so no per-card listeners exist.
 function renderBoard(data: BoardData) {
-  boardEl.innerHTML = "";
-  boardEl.style.gridTemplateColumns = `minmax(160px, 200px) repeat(${data.columns.length}, minmax(140px, 1fr))`;
+  hideTooltip();
+
+  const parts: string[] = [];
 
   // Header row
-  const headerCorner = document.createElement("div");
-  headerCorner.className = "board-header-cell corner";
-  boardEl.appendChild(headerCorner);
-
+  parts.push(`<div class="board-header-cell corner"></div>`);
   const startedProgress = computeStartedProgress(data.columns);
   for (let colIdx = 0; colIdx < data.columns.length; colIdx++) {
     const col = data.columns[colIdx];
-    const headerCell = document.createElement("div");
-    headerCell.className = "board-header-cell";
     const progress = startedProgress.get(colIdx) ?? 0.5;
-    headerCell.innerHTML = `${statusIconSvg(col.type, col.color, progress)} ${escapeHtml(col.name)}`;
-    boardEl.appendChild(headerCell);
+    parts.push(`<div class="board-header-cell">${statusIconSvg(col.type, col.color, progress)} ${escapeHtml(col.name)}</div>`);
   }
 
   // Data rows
   for (let rowIdx = 0; rowIdx < data.rows.length; rowIdx++) {
     const row = data.rows[rowIdx];
-    const isFirstRow = rowIdx === 0;
-    const labelCell = document.createElement("div");
-    labelCell.className = "board-row-label";
     const issueUrl = `https://linear.app/issue/${row.issue.identifier}`;
 
     // Build row label: [status-icon] title on first line, metadata below
@@ -606,163 +607,47 @@ function renderBoard(data: BoardData) {
     }
     if (row.issue.assignee) {
       if (row.issue.assignee.avatarUrl) {
-        labelHtml += `<img class="row-avatar" src="${row.issue.assignee.avatarUrl}" alt="${escapeHtml(row.issue.assignee.name)}" title="${escapeHtml(row.issue.assignee.name)}">`;
+        labelHtml += `<img class="row-avatar" src="${escapeHtml(row.issue.assignee.avatarUrl)}" alt="${escapeHtml(row.issue.assignee.name)}" title="${escapeHtml(row.issue.assignee.name)}">`;
       } else {
         const initial = row.issue.assignee.name.charAt(0).toUpperCase();
-        labelHtml += `<span class="row-avatar-initial" title="${escapeHtml(row.issue.assignee.name)}">${initial}</span>`;
+        labelHtml += `<span class="row-avatar-initial" title="${escapeHtml(row.issue.assignee.name)}">${escapeHtml(initial)}</span>`;
       }
     }
     labelHtml += `</div>`;
-    labelCell.innerHTML = labelHtml;
-    boardEl.appendChild(labelCell);
-
-    const rowCells: HTMLElement[] = [];
+    parts.push(`<div class="board-row-label">${labelHtml}</div>`);
 
     for (const col of data.columns) {
-      const cell = document.createElement("div");
-      cell.className = "board-cell";
-      cell.dataset.stateId = col.id;
-      cell.dataset.rowIdx = String(rowIdx);
-      rowCells.push(cell);
-
-      // Drop target for drag & drop (only accept from same row)
-      cell.addEventListener("dragover", (e) => {
-        e.preventDefault();
-        const dragRow = boardEl.getAttribute("data-drag-row");
-        if (dragRow !== null && dragRow !== String(rowIdx)) {
-          e.dataTransfer!.dropEffect = "none";
-          return;
-        }
-        e.dataTransfer!.dropEffect = "move";
-        cell.classList.add("board-cell-dragover");
-      });
-      cell.addEventListener("dragleave", () => {
-        cell.classList.remove("board-cell-dragover");
-      });
-      cell.addEventListener("drop", async (e) => {
-        e.preventDefault();
-        cell.classList.remove("board-cell-dragover");
-        const dragRow = boardEl.getAttribute("data-drag-row");
-        if (dragRow !== null && dragRow !== String(rowIdx)) return;
-
-        const issueId = e.dataTransfer!.getData("text/plain");
-        if (!issueId || !cachedApiKey) return;
-
-        // Move card element to this cell immediately
-        const draggedCard = boardEl.querySelector(`[data-issue-id="${issueId}"]`) as HTMLElement | null;
-        if (draggedCard) {
-          let wrapper = cell.querySelector(".cell-card-wrapper");
-          if (!wrapper) {
-            wrapper = document.createElement("div");
-            wrapper.className = "cell-card-wrapper";
-            cell.insertBefore(wrapper, cell.firstChild);
-          }
-          wrapper.appendChild(draggedCard);
-        }
-
-        // Update state via API
-        try {
-          await updateIssueState(cachedApiKey, issueId, col.id);
-        } catch (err) {
-          console.error("[whiteboard] Failed to update issue state:", err);
-          loadBoard();
-        }
-      });
-
       const subissues = row.cells[col.id] ?? [];
-
+      let cellInner = "";
       if (subissues.length > 0) {
         // Wrap cards in a container, CSS .collapsed limits to 2 rows
-        const cardWrapper = document.createElement("div");
-        cardWrapper.className = "cell-card-wrapper collapsed";
+        let cardsHtml = "";
         for (const sub of subissues) {
-          cardWrapper.appendChild(createCard(sub, isFirstRow));
+          cardsHtml += cardHtml(sub);
         }
-        cell.appendChild(cardWrapper);
-
-        // Add toggle only if content overflows (checked after render)
-        const toggleBtn = document.createElement("button");
-        toggleBtn.className = "cell-toggle-btn";
-        toggleBtn.textContent = `Show all (${subissues.length})`;
-        let expanded = false;
-        toggleBtn.addEventListener("click", () => {
-          expanded = !expanded;
-          if (expanded) {
-            cardWrapper.classList.remove("collapsed");
-            toggleBtn.textContent = "Show less";
-          } else {
-            cardWrapper.classList.add("collapsed");
-            toggleBtn.textContent = `Show all (${subissues.length})`;
-          }
-        });
-        cell.appendChild(toggleBtn);
-
-        // After render, remove collapsed if content doesn't overflow
-        requestAnimationFrame(() => {
-          if (cardWrapper.scrollHeight <= cardWrapper.offsetHeight) {
-            cardWrapper.classList.remove("collapsed");
-            toggleBtn.hidden = true;
-          }
-        });
+        // Toggle is hidden after render if the content doesn't overflow
+        cellInner = `<div class="cell-card-wrapper collapsed">${cardsHtml}</div><button class="cell-toggle-btn" data-count="${subissues.length}">Show all (${subissues.length})</button>`;
       }
-      boardEl.appendChild(cell);
+      parts.push(`<div class="board-cell" data-state-id="${escapeHtml(col.id)}" data-row-idx="${rowIdx}">${cellInner}</div>`);
     }
   }
+
+  boardEl.style.gridTemplateColumns = `minmax(160px, 200px) repeat(${data.columns.length}, minmax(140px, 1fr))`;
+  boardEl.innerHTML = parts.join("");
+
+  scheduleOverflowCheck();
 }
 
-function createCard(sub: SubIssue, isFirstRow = false): HTMLElement {
-  const card = document.createElement("a");
-  card.className = "card";
-  card.href = `https://linear.app/issue/${sub.identifier}`;
-  card.target = "_blank";
-  card.dataset.priority = String(sub.priority);
-  card.dataset.issueId = sub.id;
-  if (sub.assignee) {
-    card.dataset.assigneeId = sub.assignee.id;
-  }
-
-  // Tooltip ref (used by drag and hover)
-  let tooltipEl: HTMLElement | null = null;
-
-  // Drag support
-  card.draggable = true;
-  card.addEventListener("dragstart", (e) => {
-    e.dataTransfer!.setData("text/plain", sub.id);
-    e.dataTransfer!.effectAllowed = "move";
-    card.classList.add("card-dragging");
-    // Record which row this card belongs to (for same-row constraint)
-    const parentCell = card.closest(".board-cell") as HTMLElement | null;
-    if (parentCell?.dataset.rowIdx) {
-      boardEl.setAttribute("data-drag-row", parentCell.dataset.rowIdx);
-    }
-    // Hide tooltip during drag
-    if (tooltipEl) {
-      tooltipEl.remove();
-      tooltipEl = null;
-    }
-  });
-  card.addEventListener("dragend", () => {
-    card.classList.remove("card-dragging");
-    boardEl.removeAttribute("data-drag-row");
-    // Clear any lingering dragover highlights
-    boardEl.querySelectorAll(".board-cell-dragover").forEach((el) => el.classList.remove("board-cell-dragover"));
-  });
-  // Prevent navigating to href when dropping
-  card.addEventListener("click", (e) => {
-    if (card.classList.contains("card-dragging")) {
-      e.preventDefault();
-    }
-  });
-
+function cardHtml(sub: SubIssue): string {
   // Use first whitelisted label color as card background (25% tint)
   const colorLabel = sub.labels.nodes.find((l) => colorLabelSet.has(l.name));
-  if (colorLabel) {
-    card.style.backgroundColor = colorLabel.color + "40";
-    card.style.border = `1px solid ${colorLabel.color}4D`;
-  }
+  const styleAttr = colorLabel
+    ? ` style="background-color:${escapeHtml(colorLabel.color)}40;border:1px solid ${escapeHtml(colorLabel.color)}4D"`
+    : "";
+  const assigneeAttr = sub.assignee ? ` data-assignee-id="${escapeHtml(sub.assignee.id)}"` : "";
 
   // Title only
-  let html = `<div class="card-title">${escapeHtml(sub.title)}</div>`;
+  let inner = `<div class="card-title">${escapeHtml(sub.title)}</div>`;
 
   // Avatar overlapping top-right (with elapsed-days ring for started states)
   if (sub.assignee) {
@@ -775,67 +660,217 @@ function createCard(sub: SubIssue, isFirstRow = false): HTMLElement {
 
     let avatarInner = "";
     if (sub.assignee.avatarUrl) {
-      avatarInner = `<div class="card-avatar-wrapper"><img class="card-avatar" src="${sub.assignee.avatarUrl}" alt="${escapeHtml(sub.assignee.name)}"></div>`;
+      avatarInner = `<div class="card-avatar-wrapper"><img class="card-avatar" src="${escapeHtml(sub.assignee.avatarUrl)}" alt="${escapeHtml(sub.assignee.name)}"></div>`;
     } else {
       const initial = sub.assignee.name.charAt(0).toUpperCase();
-      avatarInner = `<div class="card-avatar-wrapper"><div class="card-avatar-initial">${initial}</div></div>`;
+      avatarInner = `<div class="card-avatar-wrapper"><div class="card-avatar-initial">${escapeHtml(initial)}</div></div>`;
     }
 
     if (ringGradient) {
-      html += `<div class="card-avatar-ring" style="background:${ringGradient}">${avatarInner}</div>`;
+      inner += `<div class="card-avatar-ring" style="background:${ringGradient}">${avatarInner}</div>`;
     } else {
       // No ring — render avatar wrapper in original position
-      html += avatarInner;
+      inner += avatarInner;
     }
   }
 
-  card.innerHTML = html;
-
-  card.addEventListener("mouseenter", () => {
-    // Build tooltip
-    let tooltipLabels = "";
-    for (const label of sub.labels.nodes) {
-      tooltipLabels += `<span class="tooltip-label" style="background:${label.color}30;color:${label.color}">${escapeHtml(label.name)}</span> `;
-    }
-    tooltipEl = document.createElement("div");
-    tooltipEl.className = "card-tooltip tooltip-visible";
-    tooltipEl.innerHTML = `
-      <div class="tooltip-identifier">${escapeHtml(sub.identifier)}</div>
-      <div class="tooltip-title">${escapeHtml(sub.title)}</div>
-      ${sub.assignee ? `<div class="tooltip-row">Assignee: ${escapeHtml(sub.assignee.name)}</div>` : ""}
-      <div class="tooltip-row">Status: ${escapeHtml(sub.state.name)}</div>
-      <div class="tooltip-row">Priority: ${priorityLabel(sub.priority)}</div>
-      <div class="tooltip-row">In state: ${daysInCurrentState(sub)}d</div>
-      ${tooltipLabels ? `<div class="tooltip-row">${tooltipLabels}</div>` : ""}
-    `;
-    document.body.appendChild(tooltipEl);
-
-    const rect = card.getBoundingClientRect();
-    const showBelow = isFirstRow || rect.top < 150;
-    const tipRect = tooltipEl.getBoundingClientRect();
-
-    // Horizontal: center on card, clamp to viewport
-    let left = rect.left + rect.width / 2 - tipRect.width / 2;
-    left = Math.max(4, Math.min(left, window.innerWidth - tipRect.width - 4));
-    tooltipEl.style.left = `${left}px`;
-
-    if (showBelow) {
-      tooltipEl.style.top = `${rect.bottom + 6}px`;
-      tooltipEl.style.bottom = "auto";
-    } else {
-      tooltipEl.style.top = "auto";
-      tooltipEl.style.bottom = `${window.innerHeight - rect.top + 6}px`;
-    }
-  });
-  card.addEventListener("mouseleave", () => {
-    if (tooltipEl) {
-      tooltipEl.remove();
-      tooltipEl = null;
-    }
-  });
-
-  return card;
+  return `<a class="card" draggable="true" href="https://linear.app/issue/${escapeHtml(sub.identifier)}" target="_blank" data-priority="${sub.priority}" data-issue-id="${escapeHtml(sub.id)}"${assigneeAttr}${styleAttr}>${inner}</a>`;
 }
+
+// After render, expand wrappers whose content doesn't overflow and hide their
+// toggle. All reads happen before all writes to avoid layout thrashing
+// (the previous per-cell rAF callbacks interleaved reads and writes).
+function scheduleOverflowCheck() {
+  requestAnimationFrame(() => {
+    const checks: { wrapper: HTMLElement; toggle: HTMLElement | null }[] = [];
+    for (const cell of boardEl.querySelectorAll<HTMLElement>(".board-cell")) {
+      const wrapper = cell.querySelector<HTMLElement>(".cell-card-wrapper");
+      if (!wrapper || !wrapper.classList.contains("collapsed")) continue;
+      checks.push({ wrapper, toggle: cell.querySelector<HTMLElement>(".cell-toggle-btn") });
+    }
+    // Read phase
+    const fits = checks.map(({ wrapper }) => wrapper.scrollHeight <= wrapper.offsetHeight);
+    // Write phase
+    checks.forEach(({ wrapper, toggle }, i) => {
+      if (fits[i]) {
+        wrapper.classList.remove("collapsed");
+        if (toggle) toggle.hidden = true;
+      }
+    });
+  });
+}
+
+// -- Delegated board interactions --
+
+// Show all / Show less toggle, and suppress navigation while dragging
+boardEl.addEventListener("click", (e) => {
+  const target = e.target as HTMLElement;
+  const toggleBtn = target.closest<HTMLButtonElement>(".cell-toggle-btn");
+  if (toggleBtn) {
+    const wrapper = toggleBtn.parentElement?.querySelector(".cell-card-wrapper");
+    if (wrapper) {
+      const collapsed = wrapper.classList.toggle("collapsed");
+      toggleBtn.textContent = collapsed ? `Show all (${toggleBtn.dataset.count})` : "Show less";
+    }
+    return;
+  }
+  // Prevent navigating to href when dropping
+  const card = target.closest<HTMLElement>(".card");
+  if (card?.classList.contains("card-dragging")) {
+    e.preventDefault();
+  }
+});
+
+// Drag & drop (same-row constraint enforced via data-drag-row on boardEl)
+boardEl.addEventListener("dragstart", (e) => {
+  const card = (e.target as HTMLElement).closest<HTMLElement>(".card");
+  if (!card?.dataset.issueId) return;
+  e.dataTransfer!.setData("text/plain", card.dataset.issueId);
+  e.dataTransfer!.effectAllowed = "move";
+  card.classList.add("card-dragging");
+  // Record which row this card belongs to (for same-row constraint)
+  const parentCell = card.closest<HTMLElement>(".board-cell");
+  if (parentCell?.dataset.rowIdx) {
+    boardEl.setAttribute("data-drag-row", parentCell.dataset.rowIdx);
+  }
+  // Hide tooltip during drag
+  hideTooltip();
+});
+
+boardEl.addEventListener("dragend", (e) => {
+  const card = (e.target as HTMLElement).closest<HTMLElement>(".card");
+  card?.classList.remove("card-dragging");
+  boardEl.removeAttribute("data-drag-row");
+  // Clear any lingering dragover highlights
+  boardEl.querySelectorAll(".board-cell-dragover").forEach((el) => el.classList.remove("board-cell-dragover"));
+});
+
+let lastDragOverCell: HTMLElement | null = null;
+
+boardEl.addEventListener("dragover", (e) => {
+  const cell = (e.target as HTMLElement).closest<HTMLElement>(".board-cell");
+  if (!cell) return;
+  e.preventDefault();
+  const dragRow = boardEl.getAttribute("data-drag-row");
+  if (dragRow !== null && dragRow !== cell.dataset.rowIdx) {
+    e.dataTransfer!.dropEffect = "none";
+    return;
+  }
+  e.dataTransfer!.dropEffect = "move";
+  if (lastDragOverCell !== cell) {
+    lastDragOverCell?.classList.remove("board-cell-dragover");
+    lastDragOverCell = cell;
+    cell.classList.add("board-cell-dragover");
+  }
+});
+
+boardEl.addEventListener("dragleave", (e) => {
+  const cell = (e.target as HTMLElement).closest<HTMLElement>(".board-cell");
+  if (cell && cell === lastDragOverCell && !cell.contains(e.relatedTarget as Node)) {
+    cell.classList.remove("board-cell-dragover");
+    lastDragOverCell = null;
+  }
+});
+
+boardEl.addEventListener("drop", async (e) => {
+  const cell = (e.target as HTMLElement).closest<HTMLElement>(".board-cell");
+  if (!cell) return;
+  e.preventDefault();
+  cell.classList.remove("board-cell-dragover");
+  lastDragOverCell = null;
+
+  const dragRow = boardEl.getAttribute("data-drag-row");
+  if (dragRow !== null && dragRow !== cell.dataset.rowIdx) return;
+
+  const issueId = e.dataTransfer!.getData("text/plain");
+  const stateId = cell.dataset.stateId;
+  if (!issueId || !stateId || !cachedApiKey) return;
+
+  // Move card element to this cell immediately
+  const draggedCard = boardEl.querySelector(`[data-issue-id="${CSS.escape(issueId)}"]`) as HTMLElement | null;
+  if (draggedCard) {
+    let wrapper = cell.querySelector(".cell-card-wrapper");
+    if (!wrapper) {
+      wrapper = document.createElement("div");
+      wrapper.className = "cell-card-wrapper";
+      cell.insertBefore(wrapper, cell.firstChild);
+    }
+    wrapper.appendChild(draggedCard);
+  }
+
+  // Update state via API
+  try {
+    await updateIssueState(cachedApiKey, issueId, stateId);
+  } catch (err) {
+    console.error("[whiteboard] Failed to update issue state:", err);
+    loadBoard();
+  }
+});
+
+// -- Tooltip (single reusable element, shown via delegated hover) --
+
+const tooltipEl = document.createElement("div");
+tooltipEl.className = "card-tooltip";
+document.body.appendChild(tooltipEl);
+let tooltipCard: HTMLElement | null = null;
+
+function hideTooltip() {
+  tooltipEl.classList.remove("tooltip-visible");
+  tooltipCard = null;
+}
+
+function showTooltipFor(card: HTMLElement) {
+  const sub = subIssueById.get(card.dataset.issueId ?? "");
+  if (!sub) return;
+  tooltipCard = card;
+
+  let tooltipLabels = "";
+  for (const label of sub.labels.nodes) {
+    tooltipLabels += `<span class="tooltip-label" style="background:${escapeHtml(label.color)}30;color:${escapeHtml(label.color)}">${escapeHtml(label.name)}</span> `;
+  }
+  tooltipEl.innerHTML = `
+    <div class="tooltip-identifier">${escapeHtml(sub.identifier)}</div>
+    <div class="tooltip-title">${escapeHtml(sub.title)}</div>
+    ${sub.assignee ? `<div class="tooltip-row">Assignee: ${escapeHtml(sub.assignee.name)}</div>` : ""}
+    <div class="tooltip-row">Status: ${escapeHtml(sub.state.name)}</div>
+    <div class="tooltip-row">Priority: ${priorityLabel(sub.priority)}</div>
+    <div class="tooltip-row">In state: ${daysInCurrentState(sub)}d</div>
+    ${tooltipLabels ? `<div class="tooltip-row">${tooltipLabels}</div>` : ""}
+  `;
+  tooltipEl.classList.add("tooltip-visible");
+
+  const rect = card.getBoundingClientRect();
+  const isFirstRow = card.closest<HTMLElement>(".board-cell")?.dataset.rowIdx === "0";
+  const showBelow = isFirstRow || rect.top < 150;
+  const tipRect = tooltipEl.getBoundingClientRect();
+
+  // Horizontal: center on card, clamp to viewport
+  let left = rect.left + rect.width / 2 - tipRect.width / 2;
+  left = Math.max(4, Math.min(left, window.innerWidth - tipRect.width - 4));
+  tooltipEl.style.left = `${left}px`;
+
+  if (showBelow) {
+    tooltipEl.style.top = `${rect.bottom + 6}px`;
+    tooltipEl.style.bottom = "auto";
+  } else {
+    tooltipEl.style.top = "auto";
+    tooltipEl.style.bottom = `${window.innerHeight - rect.top + 6}px`;
+  }
+}
+
+boardEl.addEventListener("mouseover", (e) => {
+  const card = (e.target as HTMLElement).closest<HTMLElement>(".card");
+  if (!card || card === tooltipCard) return;
+  if (card.classList.contains("card-dragging")) return;
+  showTooltipFor(card);
+});
+
+boardEl.addEventListener("mouseout", (e) => {
+  const card = (e.target as HTMLElement).closest<HTMLElement>(".card");
+  if (card && card === tooltipCard && !card.contains(e.relatedTarget as Node)) {
+    hideTooltip();
+  }
+});
 
 // Elapsed days in current state (from history, fallback to createdAt)
 function daysInCurrentState(sub: SubIssue): number {
@@ -890,10 +925,17 @@ function priorityLabel(priority: number): string {
   }
 }
 
+const ESCAPE_RE = /[&<>"']/g;
+const ESCAPE_MAP: Record<string, string> = {
+  "&": "&amp;",
+  "<": "&lt;",
+  ">": "&gt;",
+  '"': "&quot;",
+  "'": "&#39;",
+};
+
 function escapeHtml(text: string): string {
-  const div = document.createElement("div");
-  div.textContent = text;
-  return div.innerHTML;
+  return text.replace(ESCAPE_RE, (c) => ESCAPE_MAP[c]);
 }
 
 function showView(view: "loading" | "error" | "empty" | "board") {

@@ -49,7 +49,8 @@ export interface SubIssue {
   title: string;
   priority: number;
   createdAt: string;
-  cycle: Cycle | null;
+  // Only the id is fetched for sub-issues (used for cycle filtering)
+  cycle: { id: string } | null;
   assignee: Assignee | null;
   state: WorkflowState;
   labels: { nodes: Label[] };
