@@ -38,6 +38,6 @@ export async function setColorLabels(labels: string[]): Promise<void> {
 // e.g. https://linear.app/anotherball/view/cycle-planning-backlog-30beca7f44e5
 // → "30beca7f44e5"
 export function extractViewId(url: string): string | null {
-  const match = url.match(/\/view\/.*?-([a-f0-9]+)$/);
+  const match = url.match(/\/view\/.*?-([a-f0-9]+)(?=[?#]|$)/);
   return match ? match[1] : null;
 }
