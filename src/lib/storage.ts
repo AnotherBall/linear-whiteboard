@@ -37,7 +37,9 @@ export async function setColorLabels(labels: string[]): Promise<void> {
 // Extract view ID from Linear Custom View URL
 // e.g. https://linear.app/anotherball/view/cycle-planning-backlog-30beca7f44e5
 // → "30beca7f44e5"
+// Only ?noRedirect=1 is tolerated; other params (e.g. ?filter=) should be
+// forwarded to the whiteboard rather than silently ignored here.
 export function extractViewId(url: string): string | null {
-  const match = url.match(/\/view\/.*?-([a-f0-9]+)$/);
+  const match = url.match(/\/view\/.*?-([a-f0-9]+)(?:\?noRedirect=1)?$/);
   return match ? match[1] : null;
 }

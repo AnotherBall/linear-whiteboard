@@ -14,7 +14,7 @@ function isContextValid(): boolean {
 function getWhiteboardUrl(): string | null {
   if (!isContextValid()) return null;
   const url = window.location.href;
-  const match = url.match(/\/view\/.*?-([a-f0-9]+)$/);
+  const match = url.match(/\/view\/.*?-([a-f0-9]+)(?:\?noRedirect=1)?$/);
   if (!match) return null;
   return chrome.runtime.getURL(`src/whiteboard/whiteboard.html?viewUrl=${encodeURIComponent(url)}`);
 }
