@@ -28,6 +28,7 @@ const HIDDEN_STATE_TYPES = new Set(["triage", "backlog", "canceled"]);
 const HIDDEN_STATE_NAMES = new Set([
   "icebox", "canceled", "duplicated", "duplicate", "triage",
   "epic backlog", "epic",
+  "candidate", "shape go", "frame go",
 ]);
 
 const loadingEl = document.getElementById("loading") as HTMLElement;
