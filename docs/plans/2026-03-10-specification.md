@@ -29,7 +29,7 @@ Team members who review Linear task status during daily standup meetings.
 
 - Team's workflow states fetched from Linear API
 - Sorted by workflow type order: `unstarted` → `started` → `completed`, then by `position` within each type
-- **Hidden states**: `triage`, `backlog`, `canceled` types and names matching `Icebox`, `Canceled`, `Duplicated`, `Duplicate`, `Triage`, `Epic Backlog`, `Epic` (case-insensitive)
+- **Visible states**: `started` and `completed` types, plus `unstarted` states named `Todo` (case-insensitive). All other states (triage, backlog, canceled, duplicate, and planning-stage unstarted states such as `Epic` or `Candidate`) are hidden
 
 ### Cell Contents
 
