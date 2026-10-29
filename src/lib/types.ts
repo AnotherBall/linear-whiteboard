@@ -92,6 +92,8 @@ export interface Issue {
   project: Project | null;
   assignee: Assignee | null;
   labels: { nodes: Label[] };
+  // Only fetched for Shaping epics
+  subscribers?: { nodes: Assignee[] };
   children: { nodes: SubIssue[] };
 }
 
@@ -110,7 +112,9 @@ export interface BoardRowIssue {
   title: string;
   state: { id: string; name: string; type: string; color: string };
   project: Project | null;
+  cycle: Cycle | null;
   assignee: Assignee | null;
+  subscribers: Assignee[];
 }
 
 export interface BoardRow {
@@ -121,6 +125,8 @@ export interface BoardRow {
 export interface BoardData {
   columns: BoardColumn[];
   rows: BoardRow[];
+  // Epics in the Shaping state, rendered below the main rows
+  shapingRows: BoardRow[];
 }
 
 // Custom View

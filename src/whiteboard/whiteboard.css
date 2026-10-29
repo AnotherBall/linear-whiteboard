@@ -489,6 +489,39 @@ body {
   color: #9BA1E5;
 }
 
+/* Heading line (state, cycle) above a Shaping epic's title */
+
+.row-heading {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 3px;
+  font-size: 9.5px;
+  white-space: nowrap;
+}
+
+.row-heading .status-icon {
+  flex-shrink: 0;
+}
+
+.row-heading-text {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Color is the workflow state color, set inline */
+.row-heading-state {
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.row-heading-cycle {
+  font-weight: 500;
+  color: #8B8C90;
+}
+
 /* Row metadata (project, assignee) */
 
 .row-meta {
@@ -528,6 +561,33 @@ body {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+}
+
+/* The status icon sits on the heading line, so indent the title (icon 14px + gap 5px), like .row-meta */
+.board-row-label-shaping .row-title-line {
+  margin-left: 19px;
+}
+
+/* Overlapping avatar stack (Shaping epics: assignee + subscribers) */
+
+.row-avatar-stack {
+  display: inline-flex;
+  align-items: center;
+}
+
+.row-avatar-stack > .row-avatar,
+.row-avatar-stack > .row-avatar-initial {
+  box-shadow: 0 0 0 1.5px #1F2023;
+}
+
+.row-avatar-stack > * + * {
+  margin-left: -3px;
+}
+
+.row-avatar-more {
+  margin-left: 3px !important;
+  font-size: 9px;
+  color: #8B8C90;
 }
 
 /* Cells */
