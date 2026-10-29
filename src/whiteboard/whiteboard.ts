@@ -22,14 +22,11 @@ function issueUrlFor(identifier: string): string {
     : `https://linear.app/issue/${identifier}`;
 }
 
-// State types to hide from the board (Linear built-in types)
-const HIDDEN_STATE_TYPES = new Set(["triage", "backlog", "canceled"]);
-// State names to hide (case-insensitive match)
-const HIDDEN_STATE_NAMES = new Set([
-  "icebox", "canceled", "duplicated", "duplicate", "triage",
-  "epic backlog", "epic",
-  "candidate", "shape go", "frame go",
-]);
+// State types shown as board lanes (Linear built-in types)
+const VISIBLE_STATE_TYPES = new Set(["started", "completed"]);
+// Unstarted states shown as board lanes (case-insensitive match).
+// Other unstarted states (Epic, Candidate, Shape Go, ...) are planning stages and stay hidden.
+const VISIBLE_UNSTARTED_STATE_NAMES = new Set(["todo"]);
 
 const loadingEl = document.getElementById("loading") as HTMLElement;
 const errorEl = document.getElementById("error") as HTMLElement;
@@ -523,9 +520,9 @@ function computeStartedProgress(columns: { type: string }[]): Map<number, number
 // Filter workflow states
 function filterStates(states: WorkflowState[]): WorkflowState[] {
   return states.filter((s) => {
-    if (HIDDEN_STATE_TYPES.has(s.type)) return false;
-    if (HIDDEN_STATE_NAMES.has(s.name.toLowerCase())) return false;
-    return true;
+    if (VISIBLE_STATE_TYPES.has(s.type)) return true;
+    if (s.type === "unstarted") return VISIBLE_UNSTARTED_STATE_NAMES.has(s.name.toLowerCase());
+    return false;
   });
 }
 
