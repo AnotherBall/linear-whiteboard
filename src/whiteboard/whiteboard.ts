@@ -1,6 +1,6 @@
 import { getApiKey, extractViewId, getColorLabels } from "../lib/storage";
-import { fetchWorkflowStates, fetchCustomViewFirstPage, fetchCustomViewRemaining, fetchTeamCycles, fetchIssueRelations, updateIssueState } from "../lib/linear-api";
-import type { WorkflowState, Issue, SubIssue, BoardData, IssueGroup, Assignee, Project, Cycle, RelatedIssueRef } from "../lib/types";
+import { fetchWorkflowStates, fetchCustomViewFirstPage, fetchCustomViewRemaining, fetchTeamCycles, fetchIssueRelations, fetchTeamIssuesByStateAndLabel, updateIssueState } from "../lib/linear-api";
+import type { WorkflowState, Issue, SubIssue, BoardData, BoardRow, IssueGroup, Assignee, Project, Cycle, RelatedIssueRef } from "../lib/types";
 
 // Color label whitelist (loaded from storage)
 let colorLabelSet: Set<string> = new Set();
@@ -27,6 +27,9 @@ const VISIBLE_STATE_TYPES = new Set(["started", "completed"]);
 // Unstarted states shown as board lanes (case-insensitive match).
 // Other unstarted states (Epic, Candidate, Shape Go, ...) are planning stages and stay hidden.
 const VISIBLE_UNSTARTED_STATE_NAMES = new Set(["todo"]);
+// Team epics in this state are shown in a separate Shaping section, regardless of view and cycle
+const SHAPING_STATE_NAME = "Shaping";
+const EPIC_LABEL_NAME = "Epic";
 
 const loadingEl = document.getElementById("loading") as HTMLElement;
 const errorEl = document.getElementById("error") as HTMLElement;
@@ -121,6 +124,11 @@ function filterByCycle(issues: Issue[], cycleId: string | null): Issue[] {
   return issues.filter((issue) => issue.cycle?.id === cycleId);
 }
 
+// Sort issues by cycle ascending (issues without a cycle last); stable, so ties keep their order
+function sortByCycle(issues: Issue[]): Issue[] {
+  return [...issues].sort((a, b) => (a.cycle?.number ?? Infinity) - (b.cycle?.number ?? Infinity));
+}
+
 function detectActiveCycleId(cycles: Cycle[]): string | null {
   if (cycles.length === 0) return null;
   const now = new Date();
@@ -200,7 +208,7 @@ function updateAssigneeBtnLabel() {
   if (!selectedAssigneeId) {
     assigneeBtnEl.textContent = "👤 All";
   } else {
-    const allAssignees = collectAssignees(cachedAllIssues);
+    const allAssignees = collectAssignees([...cachedAllIssues, ...cachedShapingEpics]);
     const assignee = allAssignees.find((a) => a.id === selectedAssigneeId);
     assigneeBtnEl.textContent = assignee ? `👤 ${assignee.name}` : "👤 All";
   }
@@ -208,7 +216,7 @@ function updateAssigneeBtnLabel() {
 
 function buildAssigneePanel() {
   const filteredIssues = filterByCycle(cachedAllIssues, selectedCycleId);
-  const assignees = collectAssignees(filteredIssues);
+  const assignees = collectAssignees([...filteredIssues, ...cachedShapingEpics]);
   assigneePanelEl.innerHTML = "";
 
   // "All" option
@@ -336,11 +344,15 @@ assigneeBtnEl.addEventListener("click", () => {
 
 function applyFilterAndRender() {
   const filteredIssues = filterByCycle(cachedAllIssues, selectedCycleId);
-  if (filteredIssues.length === 0) {
+  if (filteredIssues.length === 0 && cachedShapingEpics.length === 0) {
     showView("empty");
     return;
   }
   currentGroups = groupIssues(filteredIssues, cachedGrouping);
+  // Keep one page so the Shaping section still renders when no epic matches the cycle
+  if (currentGroups.length === 0) {
+    currentGroups = [{ label: "", issues: [] }];
+  }
   currentGroupIndex = 0;
   renderCurrentGroup();
   buildAssigneePanel();
@@ -427,6 +439,8 @@ let currentGroups: IssueGroup[] = [];
 let currentGroupIndex = 0;
 let currentStates: WorkflowState[] = [];
 let cachedAllIssues: Issue[] = [];
+// Team epics in the Shaping state, fetched independently of the view and cycle
+let cachedShapingEpics: Issue[] = [];
 let cachedGrouping: string | null = null;
 let selectedCycleId: string | null = null;
 
@@ -459,7 +473,7 @@ pagerNextBtn.addEventListener("click", () => {
 function renderCurrentGroup() {
   updatePager();
   const group = currentGroups[currentGroupIndex];
-  const boardData = buildBoardData(currentStates, group.issues, selectedCycleId);
+  const boardData = buildBoardData(currentStates, group.issues, cachedShapingEpics, selectedCycleId);
   renderBoard(boardData);
   showView("board");
 }
@@ -535,13 +549,14 @@ function matchesCycle(sub: SubIssue, cycleId: string | null): boolean {
 // Sub-issues on the currently rendered board, looked up by delegated event handlers
 let subIssueById = new Map<string, SubIssue>();
 
-// Transform API data into board matrix
-function buildBoardData(states: WorkflowState[], issues: Issue[], cycleId: string | null): BoardData {
+// Transform API data into board matrix.
+// Shaping epics ignore the cycle filter for both the epic and its sub-issues.
+function buildBoardData(states: WorkflowState[], issues: Issue[], shapingEpics: Issue[], cycleId: string | null): BoardData {
   const filtered = filterStates(states);
   const columns = filtered.map((s) => ({ id: s.id, name: s.name, type: s.type, color: s.color }));
 
   subIssueById = new Map();
-  const rows = issues.map((issue) => {
+  const buildRow = (issue: Issue, cycleId: string | null): BoardRow => {
     const cells: Record<string, SubIssue[]> = {};
     for (const col of columns) {
       cells[col.id] = [];
@@ -574,13 +589,31 @@ function buildBoardData(states: WorkflowState[], issues: Issue[], cycleId: strin
         title: issue.title,
         state: issue.state,
         project: issue.project,
+        cycle: issue.cycle,
         assignee: issue.assignee,
+        subscribers: issue.subscribers?.nodes ?? [],
       },
       cells,
     };
-  });
+  };
 
-  return { columns, rows };
+  // Shaping epics are rendered as Shaping rows only, even if the view also contains them
+  const shapingIds = new Set(shapingEpics.map((e) => e.id));
+  const rows = issues.filter((issue) => !shapingIds.has(issue.id)).map((issue) => buildRow(issue, cycleId));
+  const shapingRows = shapingEpics.map((issue) => buildRow(issue, null));
+
+  return { columns, rows, shapingRows };
+}
+
+// Max avatars shown in a Shaping row's assignee + subscribers stack
+const ROW_AVATAR_STACK_MAX = 6;
+
+function rowAvatarHtml(user: Assignee): string {
+  if (user.avatarUrl) {
+    return `<img class="row-avatar" src="${escapeHtml(user.avatarUrl)}" alt="${escapeHtml(user.name)}" title="${escapeHtml(user.name)}">`;
+  }
+  const initial = user.name.charAt(0).toUpperCase();
+  return `<span class="row-avatar-initial" title="${escapeHtml(user.name)}">${escapeHtml(initial)}</span>`;
 }
 
 // Render the board as a CSS Grid.
@@ -601,27 +634,50 @@ function renderBoard(data: BoardData) {
     parts.push(`<div class="board-header-cell">${statusIconSvg(col.type, col.color, progress)} ${escapeHtml(col.name)}</div>`);
   }
 
-  // Data rows
-  for (let rowIdx = 0; rowIdx < data.rows.length; rowIdx++) {
-    const row = data.rows[rowIdx];
+  // Data rows (main rows first, then Shaping rows; rowIdx runs across both for drag & drop)
+  const allRows = [...data.rows, ...data.shapingRows];
+  for (let rowIdx = 0; rowIdx < allRows.length; rowIdx++) {
+    const row = allRows[rowIdx];
+    const isShaping = rowIdx >= data.rows.length;
 
-    // Build row label: [status-icon] title on first line, metadata below
+    // Build row label: [status-icon] title on first line, metadata below.
+    // Shaping rows put the status icon on a heading line (state + cycle) above the title,
+    // so the icon stays on the first line like other rows, and omit the project.
     const stateIcon = statusIconSvg(row.issue.state.type, row.issue.state.color);
-    let labelHtml = `<div class="row-title-line">${stateIcon}<a href="${escapeHtml(issueUrlFor(row.issue.identifier))}" target="_blank" title="${escapeHtml(row.issue.title)}">${escapeHtml(row.issue.title)}</a></div>`;
+    const titleLink = `<a href="${escapeHtml(issueUrlFor(row.issue.identifier))}" target="_blank" title="${escapeHtml(row.issue.title)}">${escapeHtml(row.issue.title)}</a>`;
+    let labelHtml = "";
+    if (isShaping) {
+      let heading = `<span class="row-heading-state" style="color:${escapeHtml(row.issue.state.color)}">${escapeHtml(row.issue.state.name)}</span>`;
+      const cycle = row.issue.cycle;
+      if (cycle) {
+        const cycleLabel = cycle.name ?? `Cycle ${cycle.number}`;
+        heading += `<span class="row-heading-cycle" title="${escapeHtml(`${cycleLabel} (${cycle.startsAt.slice(0, 10)} ~ ${cycle.endsAt.slice(0, 10)})`)}">${escapeHtml(cycleLabel)}</span>`;
+      }
+      labelHtml += `<div class="row-heading">${stateIcon}<span class="row-heading-text">${heading}</span></div>`;
+      labelHtml += `<div class="row-title-line">${titleLink}</div>`;
+    } else {
+      labelHtml += `<div class="row-title-line">${stateIcon}${titleLink}</div>`;
+    }
     labelHtml += `<div class="row-meta">`;
-    if (row.issue.project) {
+    if (row.issue.project && !isShaping) {
       labelHtml += `<span class="row-project">${escapeHtml(row.issue.project.name)}</span>`;
     }
-    if (row.issue.assignee) {
-      if (row.issue.assignee.avatarUrl) {
-        labelHtml += `<img class="row-avatar" src="${escapeHtml(row.issue.assignee.avatarUrl)}" alt="${escapeHtml(row.issue.assignee.name)}" title="${escapeHtml(row.issue.assignee.name)}">`;
-      } else {
-        const initial = row.issue.assignee.name.charAt(0).toUpperCase();
-        labelHtml += `<span class="row-avatar-initial" title="${escapeHtml(row.issue.assignee.name)}">${escapeHtml(initial)}</span>`;
+    if (isShaping) {
+      // Assignee first, then subscribers (deduplicated) as an overlapping stack
+      const people = row.issue.assignee ? [row.issue.assignee] : [];
+      for (const sub of row.issue.subscribers) {
+        if (!people.some((p) => p.id === sub.id)) people.push(sub);
       }
+      if (people.length > 0) {
+        const shown = people.slice(0, ROW_AVATAR_STACK_MAX);
+        const rest = people.length - shown.length;
+        labelHtml += `<span class="row-avatar-stack">${shown.map(rowAvatarHtml).join("")}${rest > 0 ? `<span class="row-avatar-more">+${rest}</span>` : ""}</span>`;
+      }
+    } else if (row.issue.assignee) {
+      labelHtml += rowAvatarHtml(row.issue.assignee);
     }
     labelHtml += `</div>`;
-    parts.push(`<div class="board-row-label">${labelHtml}</div>`);
+    parts.push(`<div class="board-row-label${isShaping ? " board-row-label-shaping" : ""}">${labelHtml}</div>`);
 
     for (const col of data.columns) {
       const subissues = row.cells[col.id] ?? [];
@@ -1063,22 +1119,28 @@ async function loadBoard() {
 
     const teamId = detectedTeam.id;
 
-    // Fetch remaining issues/children, states, and cycles in parallel
-    const [viewData, states, cycles] = await Promise.all([
+    // Fetch remaining issues/children, states, cycles, and Shaping epics in parallel.
+    // Shaping epics are non-fatal: on failure the board renders without the Shaping section.
+    const [viewData, states, cycles, shapingEpics] = await Promise.all([
       fetchCustomViewRemaining(apiKey, viewId, firstPage),
       fetchWorkflowStates(apiKey, teamId),
       fetchTeamCycles(apiKey, teamId),
+      fetchTeamIssuesByStateAndLabel(apiKey, teamId, SHAPING_STATE_NAME, EPIC_LABEL_NAME).catch((e) => {
+        console.error("[whiteboard] Failed to fetch Shaping epics:", e);
+        return [] as Issue[];
+      }),
     ]);
 
     // Attach blocking relations before rendering so the board renders once.
     // Non-fatal: on failure the board just renders without dependency info.
     try {
-      await loadRelations(apiKey, viewData.issues.nodes);
+      await loadRelations(apiKey, [...viewData.issues.nodes, ...shapingEpics]);
     } catch (e) {
       console.error("[whiteboard] Failed to fetch issue relations:", e);
     }
 
     cachedAllIssues = viewData.issues.nodes;
+    cachedShapingEpics = sortByCycle(shapingEpics);
     cachedGrouping = viewData.viewPreferencesValues?.issueGrouping ?? null;
     viewNameEl.textContent = viewData.name;
     currentStates = states;

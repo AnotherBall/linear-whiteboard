@@ -24,6 +24,7 @@ Team members who review Linear task status during daily standup meetings.
 - Issues from a Linear Custom View (fetched via Custom View API)
 - Filtered by selected **Cycle** (cycle selector in toolbar)
 - All matching rows are shown (including those with no sub-issues in visible lanes)
+- **Shaping epics**: below the main rows, the team's issues in the `Shaping` state with the `Epic` label (case-insensitive). These are fetched from the team directly, independent of the Custom View, the selected cycle, and grouping; their sub-issues are not filtered by cycle either. They are excluded from the main rows. Sorted by cycle ascending (no cycle last). Their label shows a heading line above the title with the state name (in the state color) and the cycle; the project is omitted, and the assignee plus subscribers are shown as avatars
 
 ### Horizontal Axis (Columns)
 

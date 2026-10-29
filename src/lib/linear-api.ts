@@ -261,6 +261,7 @@ interface IssueNodeRaw {
   parent: { id: string } | null;
   assignee: { id: string; name: string; avatarUrl: string | null } | null;
   labels: { nodes: { id: string; name: string; color: string }[] };
+  subscribers?: { nodes: { id: string; name: string; avatarUrl: string | null }[] };
   children: {
     pageInfo: PageInfo;
     nodes: SubIssue[];
@@ -342,6 +343,106 @@ export interface FirstPageResult {
   endCursor: string | null;
 }
 
+const MORE_CHILDREN_QUERY = `
+  query MoreChildren($issueId: String!, $first: Int!, $after: String) {
+    issue(id: $issueId) {
+      children(first: $first, after: $after) {
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+        nodes {
+          ${CHILD_FIELDS}
+        }
+      }
+    }
+  }
+`;
+
+// Fetch remaining children in parallel (one promise per issue that needs more pages)
+async function fetchRemainingChildren(apiKey: string, issueNodes: IssueNodeRaw[]): Promise<void> {
+  const PAGE_SIZE = 100;
+  await Promise.all(issueNodes.map(async (issue) => {
+    let childPageInfo = issue.children.pageInfo;
+    while (childPageInfo.hasNextPage) {
+      const data = await fetchGraphQL<{
+        issue: { children: { pageInfo: PageInfo; nodes: SubIssue[] } };
+      }>(apiKey, MORE_CHILDREN_QUERY, { issueId: issue.id, first: PAGE_SIZE, after: childPageInfo.endCursor });
+
+      issue.children.nodes.push(...data.issue.children.nodes);
+      childPageInfo = data.issue.children.pageInfo;
+    }
+  }));
+}
+
+const TEAM_ISSUES_BY_STATE_AND_LABEL_QUERY = `
+  query TeamIssuesByStateAndLabel($teamId: ID!, $stateName: String!, $labelName: String!, $first: Int!, $after: String) {
+    issues(
+      filter: {
+        team: { id: { eq: $teamId } }
+        state: { name: { eqIgnoreCase: $stateName } }
+        labels: { some: { name: { eqIgnoreCase: $labelName } } }
+      }
+      first: $first
+      after: $after
+    ) {
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+      nodes {
+        ${ISSUE_FIELDS}
+        subscribers(first: 20) {
+          nodes {
+            id
+            name
+            avatarUrl
+          }
+        }
+        children(first: $first) {
+          pageInfo {
+            hasNextPage
+            endCursor
+          }
+          nodes {
+            ${CHILD_FIELDS}
+          }
+        }
+      }
+    }
+  }
+`;
+
+// Fetch all team issues in the given state that carry the given label (independent of any view or cycle)
+export async function fetchTeamIssuesByStateAndLabel(
+  apiKey: string,
+  teamId: string,
+  stateName: string,
+  labelName: string
+): Promise<Issue[]> {
+  const PAGE_SIZE = 100;
+  const nodes: IssueNodeRaw[] = [];
+  let hasNextPage = true;
+  let after: string | null = null;
+
+  while (hasNextPage) {
+    const data: { issues: { pageInfo: PageInfo; nodes: IssueNodeRaw[] } } = await fetchGraphQL(
+      apiKey,
+      TEAM_ISSUES_BY_STATE_AND_LABEL_QUERY,
+      { teamId, stateName, labelName, first: PAGE_SIZE, after }
+    );
+    nodes.push(...data.issues.nodes);
+    hasNextPage = data.issues.pageInfo.hasNextPage;
+    after = data.issues.pageInfo.endCursor;
+  }
+
+  await fetchRemainingChildren(apiKey, nodes);
+
+  return nodes
+    .map((n) => ({ ...n, children: { nodes: n.children.nodes } }))
+    .sort((a, b) => a.sortOrder - b.sortOrder);
+}
+
 // Fetch only the first page of issues (returns teamId early so callers can parallelize)
 export async function fetchCustomViewFirstPage(
   apiKey: string,
@@ -394,34 +495,7 @@ export async function fetchCustomViewRemaining(
     issuesCursor = result.customView.issues.pageInfo.endCursor;
   }
 
-  // Fetch remaining children in parallel (one promise per issue that needs more pages)
-  await Promise.all(allIssueNodes.map(async (issue) => {
-    let childPageInfo = issue.children.pageInfo;
-    while (childPageInfo.hasNextPage) {
-      const query = `
-        query MoreChildren($issueId: String!, $first: Int!, $after: String) {
-          issue(id: $issueId) {
-            children(first: $first, after: $after) {
-              pageInfo {
-                hasNextPage
-                endCursor
-              }
-              nodes {
-                ${CHILD_FIELDS}
-              }
-            }
-          }
-        }
-      `;
-
-      const data = await fetchGraphQL<{
-        issue: { children: { pageInfo: PageInfo; nodes: SubIssue[] } };
-      }>(apiKey, query, { issueId: issue.id, first: PAGE_SIZE, after: childPageInfo.endCursor });
-
-      issue.children.nodes.push(...data.issue.children.nodes);
-      childPageInfo = data.issue.children.pageInfo;
-    }
-  }));
+  await fetchRemainingChildren(apiKey, allIssueNodes);
 
   // Build result
   const viewMeta = firstPage.viewMeta;
